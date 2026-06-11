@@ -1067,9 +1067,9 @@ function renderOverviewSorted(col, asc) {
 function exportCSV() {
   let passProducts = products.filter(p => !p.penalty);
   if (passProducts.length === 0) { alert('没有可导出的产品'); return; }
-  let rows = [['排名','产品名称','公司','数据周期','频率','年化收益','最大回撤','修复天数','年化波动率','卡玛比率','索提诺比率','月度胜率','备注']];
+  let rows = [['排名','代码','产品名称','公司','数据周期','频率','年化收益','最大回撤','修复天数','年化波动率','卡玛比率','索提诺比率','月度胜率','备注']];
   passProducts.forEach((p,i) => {
-    rows.push([i+1, p.managerName, p.company, p.metrics.dateRange, p.metrics.frequency,
+    rows.push([i+1, p.code||'', p.managerName, p.company, p.metrics.dateRange, p.metrics.frequency,
       (p.metrics.cagr*100).toFixed(2)+'%', '-'+(p.metrics.maxDrawdown.drawdown*100).toFixed(2)+'%',
       p.metrics.maxDrawdown.recoveryDays, (p.metrics.annualizedVolatility*100).toFixed(2)+'%',
       p.metrics.calmarRatio.toFixed(2), p.metrics.sortinoRatio.toFixed(2),
