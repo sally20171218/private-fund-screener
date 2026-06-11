@@ -189,7 +189,8 @@
   <!-- Results -->
   <div class="card" id="resultsCard">
     <div class="tabs">
-      <div class="tab active" data-tab="overview">📋 产品总览（对比排名）</div>
+      <div class="tab active" data-tab="overview">📋 产品总览</div>
+      <div class="tab" data-tab="compare">📈 净值对比</div>
       <div class="tab" data-tab="detail">🔍 单产品详情</div>
       <div class="tab veto-tab" data-tab="veto">⛔ 一票否决产品</div>
     </div>
@@ -201,11 +202,39 @@
         <p>暂无产品数据，请先添加产品</p>
       </div>
       <div id="overviewContent" style="display:none">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;padding:12px;background:#f8f9fb;border-radius:8px">
+          <span style="font-weight:600;font-size:13px">🔍 筛选:</span>
+          <label style="font-size:12px">卡玛≥<input type="number" id="filterCalmar" value="0" step="0.1" style="width:55px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" onchange="renderOverview()"></label>
+          <label style="font-size:12px">回撤≤<input type="number" id="filterDD" value="100" step="0.01" style="width:55px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" onchange="renderOverview()">%</label>
+          <label style="font-size:12px">索提诺≥<input type="number" id="filterSortino" value="0" step="0.1" style="width:55px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" onchange="renderOverview()"></label>
+          <button class="btn btn-outline btn-sm" onclick="exportCSV()">📥 导出CSV</button>
+          <button class="btn btn-outline btn-sm" onclick="resetFilters()">🔄 重置</button>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;padding:12px;background:#f8f9fb;border-radius:8px">
+          <span style="font-weight:600;font-size:13px">⚖️ 评分权重:</span>
+          <label style="font-size:11px">卡玛<input type="range" id="wCalmar" min="0" max="100" value="35" style="width:60px" oninput="document.getElementById('wCalmarVal').textContent=this.value;renderOverview()"><span id="wCalmarVal" style="font-size:11px">35</span></label>
+          <label style="font-size:11px">索提诺<input type="range" id="wSortino" min="0" max="100" value="30" style="width:60px" oninput="document.getElementById('wSortinoVal').textContent=this.value;renderOverview()"><span id="wSortinoVal" style="font-size:11px">30</span></label>
+          <label style="font-size:11px">低回撤<input type="range" id="wLowDD" min="0" max="100" value="20" style="width:60px" oninput="document.getElementById('wLowDDVal').textContent=this.value;renderOverview()"><span id="wLowDDVal" style="font-size:11px">20</span></label>
+          <label style="font-size:11px">胜率<input type="range" id="wWinRate" min="0" max="100" value="15" style="width:60px" oninput="document.getElementById('wWinRateVal').textContent=this.value;renderOverview()"><span id="wWinRateVal" style="font-size:11px">15</span></label>
+        </div>
         <div class="warning-box" id="noVetoWarning" style="display:none">
           <span class="icon">✅</span>所有已添加产品均通过合规筛选
         </div>
         <div style="overflow-x:auto">
           <table id="overviewTable"></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Compare -->
+    <div class="tab-content" id="tab-compare" style="display:none">
+      <div class="empty-state" id="emptyCompare">
+        <div class="icon">📈</div>
+        <p>需要至少2个产品才能对比</p>
+      </div>
+      <div id="compareContent" style="display:none">
+        <div class="chart-container">
+          <canvas id="compareChart"></canvas>
         </div>
       </div>
     </div>
@@ -237,6 +266,38 @@
 <script>
 // ============ 数据存储 ============
 let products = [];
+const STORAGE_KEY = 'fund_screener_products';
+
+function saveProducts() {
+  try {
+    let data = products.map(p => ({
+      id: p.id, managerName: p.managerName, company: p.company,
+      penalty: p.penalty, penaltyNote: p.penaltyNote, notes: p.notes,
+      navData: p.navData.map(d => ({ date: d.date.getTime(), nav: d.nav, cumNav: d.cumNav }))
+    }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch(e) { console.warn('storage save failed:', e.message); }
+}
+
+function loadProducts() {
+  try {
+    let raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    let data = JSON.parse(raw);
+    products = data.map(d => {
+      let navData = d.navData.map(x => ({ date: new Date(x.date), nav: x.nav, cumNav: x.cumNav }));
+      let m = calcMetrics(navData);
+      return { ...d, navData: navData, metrics: m };
+    }).filter(p => p.metrics);
+  } catch(e) { console.warn('storage load failed:', e.message); }
+}
+
+function deleteProduct(id) {
+  if (!confirm('确定删除该产品？此操作不可撤销。')) return;
+  products = products.filter(p => p.id !== id);
+  saveProducts();
+  renderAll();
+}
 
 // ============ 工具函数 ============
 function parseDate(val) {
@@ -400,6 +461,52 @@ function calcMetrics(navData) {
   // Calmar ratio
   let calmar = maxDD > 0 ? cagr / maxDD : 0;
 
+  // Sortino ratio (downside deviation only)
+  let negReturns = returns.filter(r => r < 0);
+  let sortino = 0;
+  if (negReturns.length > 0) {
+    let downVar = negReturns.reduce((a,b) => a + b*b, 0) / returns.length;
+    let downDev = Math.sqrt(downVar) * Math.sqrt(annFactor);
+    sortino = downDev > 0 ? cagr / downDev : 0;
+  } else { sortino = cagr > 0 ? 99 : 0; }
+
+  // Dividend detection (cumulative vs unit NAV ratio analysis)
+  let dividends = [];
+  let hasCumNav = navData.some(d => d.cumNav !== null && d.cumNav !== undefined && !isNaN(d.cumNav));
+  if (hasCumNav && n >= 4) {
+    let cumNavs = navData.map(d => d.cumNav);
+    let ratios = [];
+    for (let i = 0; i < n; i++) {
+      if (cumNavs[i] && navs[i] > 0) ratios.push(cumNavs[i] / navs[i]);
+      else ratios.push(null);
+    }
+    for (let i = 1; i < n; i++) {
+      if (ratios[i] && ratios[i-1]) {
+        let ratioChg = (ratios[i] / ratios[i-1] - 1) * 100;
+        // Detect dividend: ratio jump > 1% (filter out daily noise)
+        if (ratioChg > 1) {
+          let mr = cumNavs[i] / cumNavs[i-1] - 1;
+          let expectedUnit = navs[i-1] * (1 + mr);
+          let divPerShare = expectedUnit - navs[i];
+          if (divPerShare > 0.001) {
+            let divRate = divPerShare / navs[i-1] * 100;
+            dividends.push({
+              exDate: fmtDate(dates[i]),
+              prevDate: fmtDate(dates[i-1]),
+              prevUnitNav: navs[i-1],
+              exUnitNav: navs[i],
+              prevCumNav: cumNavs[i-1],
+              exCumNav: cumNavs[i],
+              divPerShare: divPerShare,
+              divRate: divRate,
+              marketReturn: mr
+            });
+          }
+        }
+      }
+    }
+  }
+
   return {
     dataPoints: n,
     dateRange: fmtDate(dates[0]) + ' ~ ' + fmtDate(dates[n-1]),
@@ -411,7 +518,10 @@ function calcMetrics(navData) {
     annualDrawdowns: annualDDs,
     annualizedVolatility: annVol,
     cagr: cagr,
-    calmarRatio: calmar
+    calmarRatio: calmar,
+    sortinoRatio: sortino,
+    dividends: dividends,
+    hasCumNav: hasCumNav
   };
 }
 
@@ -444,23 +554,72 @@ function handleFile(e) {
       let ws = wb.Sheets[wb.SheetNames[0]];
       let data = XLSX.utils.sheet_to_json(ws, { header: 1 });
 
-      // Find header row: first row where col0 is date-like
-      let startRow = 0;
-      for (let i = 0; i < Math.min(data.length, 5); i++) {
+      // Auto-detect columns by scanning first 15 rows
+      let sampleRows = Math.min(data.length, 15);
+      let colScores = {}; // colIdx -> { dateCount, numCount, headerHint }
+      for (let i = 0; i < sampleRows; i++) {
         let row = data[i];
-        if (!row || row.length < 2) continue;
-        let d = parseDate(row[0]);
-        if (d && !isNaN(row[1]) && row[1] > 0) { startRow = i; break; }
+        if (!row) continue;
+        for (let j = 0; j < row.length; j++) {
+          if (!colScores[j]) colScores[j] = { dateCount: 0, numCount: 0 };
+          let val = row[j];
+          if (val === null || val === undefined || val === '') continue;
+          if (parseDate(val)) colScores[j].dateCount++;
+          let num = parseFloat(val);
+          if (!isNaN(num) && num > 0) colScores[j].numCount++;
+        }
+      }
+
+      // Pick best date column and best NAV column
+      let dateCol = -1, navCol = -1, cumNavCol = -1;
+      let scored = Object.entries(colScores).map(([col, s]) => ({col: parseInt(col), ...s}));
+      scored.sort((a,b) => b.dateCount - a.dateCount);
+      dateCol = scored[0]?.col ?? 0;
+      
+      // NAV columns sorted by numCount
+      let numCols = scored.filter(s => s.col !== dateCol).sort((a,b) => b.numCount - a.numCount);
+      navCol = numCols[0]?.col ?? 1;
+      
+      // Try to detect cumulative NAV: if there are >=3 numeric columns, 
+      // the one with higher values (likely cumulative > unit) is cum_nav
+      if (numCols.length >= 2) {
+        let secondNumCol = numCols[1].col;
+        // Check if second column has consistently larger values (cumulative NAV)
+        let cumLargerCount = 0, totalCheck = 0;
+        for (let i = sampleRows; i < Math.min(data.length, sampleRows + 20); i++) {
+          let row = data[i]; if (!row) continue;
+          let v1 = parseFloat(row[navCol]), v2 = parseFloat(row[secondNumCol]);
+          if (!isNaN(v1) && !isNaN(v2) && v1 > 0 && v2 > 0) {
+            totalCheck++;
+            if (v2 > v1 * 1.5) cumLargerCount++;
+          }
+        }
+        if (totalCheck > 0 && cumLargerCount / totalCheck > 0.7) {
+          cumNavCol = secondNumCol;
+        }
+      }
+
+      // Find start row (skip header rows)
+      let startRow = 0;
+      for (let i = 0; i < Math.min(data.length, 10); i++) {
+        let row = data[i];
+        if (!row) continue;
+        let d = parseDate(row[dateCol]);
+        let n = parseFloat(row[navCol]);
+        if (d && !isNaN(n) && n > 0) { startRow = i; break; }
       }
 
       uploadedNavData = [];
+      let hasCumNav = false;
       for (let i = startRow; i < data.length; i++) {
         let row = data[i];
-        if (!row || row.length < 2) continue;
-        let d = parseDate(row[0]);
-        let nav = parseFloat(row[1]);
+        if (!row || row.length <= Math.max(dateCol, navCol)) continue;
+        let d = parseDate(row[dateCol]);
+        let nav = parseFloat(row[navCol]);
         if (d && !isNaN(nav) && nav > 0) {
-          uploadedNavData.push({ date: d, nav: nav });
+          let cumNav = cumNavCol >= 0 ? parseFloat(row[cumNavCol]) : null;
+          if (cumNav !== null && !isNaN(cumNav) && cumNav > 0) hasCumNav = true;
+          uploadedNavData.push({ date: d, nav: nav, cumNav: cumNav });
         }
       }
 
@@ -469,8 +628,9 @@ function handleFile(e) {
         uploadedNavData = null;
         document.getElementById('fileName').style.display = 'none';
       } else {
-        document.getElementById('fileName').textContent = 
-          '📎 ' + file.name + ' ✅ 已读取 ' + uploadedNavData.length + ' 条净值数据';
+        let msg = '📎 ' + file.name + ' ✅ 已读取 ' + uploadedNavData.length + ' 条净值数据';
+        if (hasCumNav) msg += '（含累计净值，可检测分红）';
+        document.getElementById('fileName').textContent = msg;
       }
     } catch(err) {
       alert('文件解析失败: ' + err.message);
@@ -501,9 +661,10 @@ document.getElementById('btnAdd').addEventListener('click', () => {
     penalty: penalty,
     penaltyNote: penalty ? (notes || '近三年有协会处罚') : '',
     notes: penalty ? '' : notes,
-    navData: uploadedNavData.map(d => ({ date: d.date, nav: d.nav })),
+    navData: uploadedNavData.map(d => ({ date: d.date, nav: d.nav, cumNav: d.cumNav })),
     metrics: metrics
   });
+  saveProducts();
 
   // Reset
   document.getElementById('mgrName').value = '';
@@ -669,6 +830,7 @@ document.getElementById('btnDemo').addEventListener('click', () => {
       });
     }
   }
+  saveProducts();
   renderAll();
 });
 
@@ -681,6 +843,7 @@ function renderAll() {
   document.getElementById('vetoBadge').textContent = '否决: ' + vetoProducts.length;
 
   renderOverview();
+  renderCompare();
   renderDetailSelector();
   renderVeto();
 }
@@ -692,64 +855,98 @@ function renderOverview() {
   let warning = document.getElementById('noVetoWarning');
   
   if (passProducts.length === 0) {
-    container.style.display = 'none';
-    empty.style.display = 'block';
-    return;
+    container.style.display = 'none'; empty.style.display = 'block'; return;
   }
-  empty.style.display = 'none';
-  container.style.display = 'block';
+  empty.style.display = 'none'; container.style.display = 'block';
 
-  // Ranking: sort by Calmar (descending)
-  let ranked = [...passProducts].sort((a,b) => b.metrics.calmarRatio - a.metrics.calmarRatio);
-  
-  // Show veto warning if applicable
+  // Apply filters
+  let fCalmar = parseFloat(document.getElementById('filterCalmar')?.value || 0);
+  let fDD = parseFloat(document.getElementById('filterDD')?.value || 100) / 100;
+  let fSortino = parseFloat(document.getElementById('filterSortino')?.value || 0);
+  let filtered = passProducts.filter(p => 
+    p.metrics.calmarRatio >= fCalmar && 
+    p.metrics.maxDrawdown.drawdown <= fDD &&
+    p.metrics.sortinoRatio >= fSortino
+  );
+
+  // Weighted scoring
+  let wc = parseInt(document.getElementById('wCalmar')?.value || 35);
+  let ws = parseInt(document.getElementById('wSortino')?.value || 30);
+  let wd = parseInt(document.getElementById('wLowDD')?.value || 20);
+  let ww = parseInt(document.getElementById('wWinRate')?.value || 15);
+  let totalW = wc + ws + wd + ww || 1;
+
+  // Normalize metrics for scoring
+  let allCalmar = filtered.map(p => p.metrics.calmarRatio); 
+  let allSortino = filtered.map(p => p.metrics.sortinoRatio);
+  let allDD = filtered.map(p => p.metrics.maxDrawdown.drawdown);
+  let allWR = filtered.map(p => p.metrics.monthWinRate);
+  let maxC = Math.max(...allCalmar, 0.01), maxS = Math.max(...allSortino, 0.01);
+  let maxDDv = Math.max(...allDD, 0.01);
+
+  filtered.forEach(p => {
+    p._score = (
+      wc * (p.metrics.calmarRatio / maxC) +
+      ws * (p.metrics.sortinoRatio / maxS) +
+      wd * (1 - p.metrics.maxDrawdown.drawdown / maxDDv) +
+      ww * p.metrics.monthWinRate
+    ) / totalW * 100;
+  });
+
+  // Sort by score descending
+  filtered.sort((a,b) => b._score - a._score);
+
   warning.style.display = products.filter(p => p.penalty).length === 0 ? 'block' : 'none';
 
   let html = `<thead><tr>
-      <th>排名</th><th>产品名称</th><th>公司</th>
-      <th>数据周期</th><th>频率</th>
-      <th onclick="sortOverview('cagr')">年化收益<span class="sort-arrow">▼</span></th>
-      <th onclick="sortOverview('dd')">历史最大回撤<span class="sort-arrow">▼</span></th>
-      <th onclick="sortOverview('ddRecovery')">回撤修复天数<span class="sort-arrow">▼</span></th>
-      <th onclick="sortOverview('vol')">年化波动率<span class="sort-arrow">▼</span></th>
-      <th onclick="sortOverview('calmar')">卡玛比率<span class="sort-arrow">▼</span></th>
-      <th>月度胜率</th><th>标签</th>
-    </tr></thead><tbody>`;
+    <th>排名</th><th>产品名称</th><th>公司</th><th>数据周期</th><th>频率</th>
+    <th onclick="sortOverview('cagr')">年化收益</th>
+    <th onclick="sortOverview('dd')">最大回撤</th>
+    <th onclick="sortOverview('ddRecovery')">修复天数</th>
+    <th onclick="sortOverview('vol')">波动率</th>
+    <th onclick="sortOverview('calmar')">卡玛</th>
+    <th onclick="sortOverview('sortino')">索提诺</th>
+    <th>胜率</th><th>综合分</th><th>标签</th><th>操作</th>
+  </tr></thead><tbody>`;
 
-  ranked.forEach((p, idx) => {
-    let m = p.metrics;
-    let rank = idx + 1;
-    let rankClass = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : rank === 3 ? 'rank-3' : 'rank-rest';
-    
-    html += `<tr>
-      <td><span class="rank-badge ${rankClass}">${rank}</span></td>
-      <td><span class="product-name" onclick="showDetail(${p.id})">${p.managerName}</span></td>
-      <td>${p.company}</td>
-      <td>${m.dateRange}</td>
-      <td><span class="tag tag-${m.frequency}">${m.frequency === 'daily' ? '日频' : '周频'}</span></td>
-      <td class="${m.cagr >= 0 ? 'positive' : 'negative'}">${fmtPct(m.cagr)}</td>
-      <td class="negative">-${fmtPct(m.maxDrawdown.drawdown)}</td>
-      <td>${m.maxDrawdown.recovered ? m.maxDrawdown.recoveryDays + '天' : '未修复'}</td>
-      <td>${fmtPct(m.annualizedVolatility)}</td>
-      <td class="${m.calmarRatio >= 1 ? 'positive' : 'negative'}">${m.calmarRatio.toFixed(2)}</td>
-      <td>${fmtPct(m.monthWinRate)}</td>
-      <td>${p.notes ? '<span class="tag tag-pass">' + p.notes + '</span>' : ''}</td>
-    </tr>`;
-  });
-
+  if (filtered.length === 0) {
+    html += '<tr><td colspan="16" style="text-align:center;color:var(--text-light);padding:20px">没有产品符合当前筛选条件</td></tr>';
+  } else {
+    filtered.forEach((p, idx) => {
+      let m = p.metrics;
+      let rank = idx + 1;
+      let rankClass = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : rank === 3 ? 'rank-3' : 'rank-rest';
+      html += `<tr>
+        <td><span class="rank-badge ${rankClass}">${rank}</span></td>
+        <td><span class="product-name" onclick="showDetail(${p.id})">${p.managerName}</span></td>
+        <td>${p.company}</td>
+        <td>${m.dateRange}</td>
+        <td><span class="tag tag-${m.frequency}">${m.frequency === 'daily' ? '日频' : '周频'}</span></td>
+        <td class="${m.cagr >= 0 ? 'positive' : 'negative'}">${fmtPct(m.cagr)}</td>
+        <td class="negative">-${fmtPct(m.maxDrawdown.drawdown)}</td>
+        <td>${m.maxDrawdown.recovered ? m.maxDrawdown.recoveryDays + '天' : '未修复'}</td>
+        <td>${fmtPct(m.annualizedVolatility)}</td>
+        <td class="${m.calmarRatio >= 1 ? 'positive' : 'negative'}">${m.calmarRatio.toFixed(2)}</td>
+        <td class="${m.sortinoRatio >= 1 ? 'positive' : 'negative'}">${m.sortinoRatio.toFixed(2)}</td>
+        <td>${fmtPct(m.monthWinRate)}</td>
+        <td style="font-weight:700">${p._score.toFixed(1)}</td>
+        <td>${p.notes ? '<span class="tag tag-pass">' + p.notes + '</span>' : ''}</td>
+        <td><button class="btn btn-outline btn-sm" style="color:#d63031;border-color:#d63031" onclick="event.stopPropagation();deleteProduct(${p.id})">删除</button></td>
+      </tr>`;
+    });
+  }
   html += '</tbody>';
   document.getElementById('overviewTable').innerHTML = html;
 }
 
-// Sort overview table
-let overviewSortCol = 'calmar';
-let overviewSortAsc = false;
-
+// Column-click sort
 function sortOverview(col) {
   if (overviewSortCol === col) overviewSortAsc = !overviewSortAsc;
   else { overviewSortCol = col; overviewSortAsc = false; }
   renderOverviewSorted(col, overviewSortAsc);
 }
+let overviewSortCol = 'calmar';
+let overviewSortAsc = false;
 
 function renderOverviewSorted(col, asc) {
   let passProducts = products.filter(p => !p.penalty);
@@ -761,40 +958,69 @@ function renderOverviewSorted(col, asc) {
       case 'ddRecovery': va = a.metrics.maxDrawdown.recoveryDays; vb = b.metrics.maxDrawdown.recoveryDays; break;
       case 'vol': va = a.metrics.annualizedVolatility; vb = b.metrics.annualizedVolatility; break;
       case 'calmar': va = a.metrics.calmarRatio; vb = b.metrics.calmarRatio; break;
+      case 'sortino': va = a.metrics.sortinoRatio; vb = b.metrics.sortinoRatio; break;
       default: va = a.metrics.calmarRatio; vb = b.metrics.calmarRatio;
     }
     return asc ? va - vb : vb - va;
   });
 
   let html = '<thead><tr><th>排名</th><th>产品名称</th><th>公司</th><th>数据周期</th><th>频率</th>';
-  let cols = ['cagr','dd','ddRecovery','vol','calmar'];
-  let labels = ['年化收益','历史最大回撤','回撤修复天数','年化波动率','卡玛比率'];
+  let cols = ['cagr','dd','ddRecovery','vol','calmar','sortino'];
+  let labels = ['年化收益','最大回撤','修复天数','波动率','卡玛','索提诺'];
   for (let i = 0; i < cols.length; i++) {
     html += `<th onclick="sortOverview('${cols[i]}')">${labels[i]}<span class="sort-arrow">${col===cols[i] ? (asc?'▲':'▼') : ''}</span></th>`;
   }
-  html += '<th>月度胜率</th><th>标签</th></tr></thead><tbody>';
-
+  html += '<th>胜率</th><th>综合分</th><th>标签</th><th>操作</th></tr></thead><tbody>';
   sorted.forEach((p, idx) => {
     let m = p.metrics;
-    let rank = idx + 1;
-    let rankClass = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : rank === 3 ? 'rank-3' : 'rank-rest';
+    let rankClass = idx === 0 ? 'rank-1' : idx === 1 ? 'rank-2' : idx === 2 ? 'rank-3' : 'rank-rest';
     html += `<tr>
-      <td><span class="rank-badge ${rankClass}">${rank}</span></td>
+      <td><span class="rank-badge ${rankClass}">${idx+1}</span></td>
       <td><span class="product-name" onclick="showDetail(${p.id})">${p.managerName}</span></td>
-      <td>${p.company}</td>
-      <td>${m.dateRange}</td>
+      <td>${p.company}</td><td>${m.dateRange}</td>
       <td><span class="tag tag-${m.frequency}">${m.frequency === 'daily' ? '日频' : '周频'}</span></td>
       <td class="${m.cagr >= 0 ? 'positive' : 'negative'}">${fmtPct(m.cagr)}</td>
       <td class="negative">-${fmtPct(m.maxDrawdown.drawdown)}</td>
       <td>${m.maxDrawdown.recovered ? m.maxDrawdown.recoveryDays + '天' : '未修复'}</td>
       <td>${fmtPct(m.annualizedVolatility)}</td>
       <td class="${m.calmarRatio >= 1 ? 'positive' : 'negative'}">${m.calmarRatio.toFixed(2)}</td>
-      <td>${fmtPct(m.monthWinRate)}</td>
+      <td class="${m.sortinoRatio >= 1 ? 'positive' : 'negative'}">${m.sortinoRatio.toFixed(2)}</td>
+      <td>${fmtPct(m.monthWinRate)}</td><td style="font-weight:700">-</td>
       <td>${p.notes ? '<span class="tag tag-pass">' + p.notes + '</span>' : ''}</td>
+      <td><button class="btn btn-outline btn-sm" style="color:#d63031;border-color:#d63031" onclick="event.stopPropagation();deleteProduct(${p.id})">删除</button></td>
     </tr>`;
   });
   html += '</tbody>';
   document.getElementById('overviewTable').innerHTML = html;
+}
+
+// ============ Export CSV ============
+function exportCSV() {
+  let passProducts = products.filter(p => !p.penalty);
+  if (passProducts.length === 0) { alert('没有可导出的产品'); return; }
+  let rows = [['排名','产品名称','公司','数据周期','频率','年化收益','最大回撤','修复天数','年化波动率','卡玛比率','索提诺比率','月度胜率','备注']];
+  passProducts.forEach((p,i) => {
+    rows.push([i+1, p.managerName, p.company, p.metrics.dateRange, p.metrics.frequency,
+      (p.metrics.cagr*100).toFixed(2)+'%', '-'+(p.metrics.maxDrawdown.drawdown*100).toFixed(2)+'%',
+      p.metrics.maxDrawdown.recoveryDays, (p.metrics.annualizedVolatility*100).toFixed(2)+'%',
+      p.metrics.calmarRatio.toFixed(2), p.metrics.sortinoRatio.toFixed(2),
+      (p.metrics.monthWinRate*100).toFixed(1)+'%', p.notes||'']);
+  });
+  let csv = '\uFEFF' + rows.map(r => r.map(c => '"' + String(c).replace(/"/g,'""') + '"').join(',')).join('\n');
+  let blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+  let a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = '私募产品筛选_' + new Date().toISOString().slice(0,10) + '.csv'; a.click();
+}
+
+function resetFilters() {
+  document.getElementById('filterCalmar').value = 0;
+  document.getElementById('filterDD').value = 100;
+  document.getElementById('filterSortino').value = 0;
+  document.getElementById('wCalmar').value = 35; document.getElementById('wCalmarVal').textContent = 35;
+  document.getElementById('wSortino').value = 30; document.getElementById('wSortinoVal').textContent = 30;
+  document.getElementById('wLowDD').value = 20; document.getElementById('wLowDDVal').textContent = 20;
+  document.getElementById('wWinRate').value = 15; document.getElementById('wWinRateVal').textContent = 15;
+  renderOverview();
 }
 
 function renderDetailSelector() {
@@ -836,6 +1062,55 @@ function renderVeto() {
   });
   html += '</tbody>';
   document.getElementById('vetoTable').innerHTML = html;
+}
+
+// ============ Comparison Chart ============
+const COMPARE_COLORS = ['#0984e3','#d63031','#00b894','#e17055','#6c5ce7','#fdcb6e','#2d3436','#e84393','#636e72','#00cec9'];
+
+function renderCompare() {
+  let passProducts = products.filter(p => !p.penalty);
+  let empty = document.getElementById('emptyCompare');
+  let content = document.getElementById('compareContent');
+  
+  if (passProducts.length < 2) {
+    content.style.display = 'none'; empty.style.display = 'block'; return;
+  }
+  empty.style.display = 'none'; content.style.display = 'block';
+
+  setTimeout(() => {
+    let existingChart = Chart.getChart('compareChart');
+    if (existingChart) existingChart.destroy();
+    let ctx = document.getElementById('compareChart')?.getContext('2d');
+    if (!ctx) return;
+
+    let datasets = passProducts.map((p, i) => {
+      let data = [...p.navData].sort((a,b) => a.date - b.date);
+      // Normalize to 1.0 at start
+      let base = data[0].nav;
+      return {
+        label: p.managerName,
+        data: data.map((d, j) => ({ x: fmtDate(d.date), y: d.nav / base })),
+        borderColor: COMPARE_COLORS[i % COMPARE_COLORS.length],
+        backgroundColor: 'transparent',
+        borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 3,
+        tension: 0.1
+      };
+    });
+
+    new Chart(ctx, {
+      type: 'line',
+      data: { datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { position: 'top', labels: { usePointStyle: true, padding: 16 } } },
+        scales: {
+          x: { ticks: { maxTicksLimit: 12, font: { size: 11 } }, grid: { display: false } },
+          y: { title: { display: true, text: '归一化净值 (起点=1)', font: { size: 11 } } }
+        }
+      }
+    });
+  }, 50);
 }
 
 // ============ Tabs ============
@@ -967,6 +1242,26 @@ function showDetail(productId) {
   });
   html += '</tbody></table>';
 
+  // Dividend history
+  if (m.dividends && m.dividends.length > 0) {
+    html += `<h4 style="margin-top:24px">💰 历史分红记录</h4>
+    <p style="font-size:12px;color:var(--text-light);margin-bottom:8px">通过累计净值与单位净值偏离自动检测</p>
+    <table><thead><tr>
+      <th>除权日</th><th>前一日单位净值</th><th>除权日单位净值</th><th>当日市场涨跌</th><th>每份分红(元)</th><th>分红率</th>
+    </tr></thead><tbody>`;
+    m.dividends.forEach(d => {
+      html += `<tr>
+        <td style="font-weight:600;color:var(--red)">${d.exDate}</td>
+        <td>${d.prevUnitNav.toFixed(4)}</td>
+        <td>${d.exUnitNav.toFixed(4)}</td>
+        <td class="${d.marketReturn >= 0 ? 'positive' : 'negative'}">${fmtPct(d.marketReturn)}</td>
+        <td class="positive">${d.divPerShare.toFixed(4)}</td>
+        <td class="positive">${d.divRate.toFixed(2)}%</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+  }
+
   // Monthly heatmap
   html += `<h4 style="margin-top:24px">月度收益率热力图</h4>
   <div style="font-size:12px;color:var(--text-light);margin-bottom:8px">
@@ -1037,34 +1332,37 @@ function showDetail(productId) {
     if (ddPeakIdx < 0) ddPeakIdx = 0;
     if (ddTroughIdx < 0) ddTroughIdx = labels.length - 1;
     
+    // Build datasets: unit NAV + cumulative NAV (if available)
+    let datasets = [{
+      label: '单位净值',
+      data: navValues,
+      borderColor: '#0984e3',
+      backgroundColor: 'rgba(9, 132, 227, 0.06)',
+      borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 4,
+      pointHoverBackgroundColor: '#0984e3', fill: true, tension: 0.1
+    }];
+    
+    let cumValues = chartData.map(d => d.cumNav).filter(v => v !== null && v !== undefined);
+    if (cumValues.length > 0 && m.hasCumNav) {
+      datasets.push({
+        label: '累计净值',
+        data: chartData.map(d => d.cumNav),
+        borderColor: '#d63031',
+        backgroundColor: 'transparent',
+        borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 4,
+        borderDash: [4, 3], tension: 0.1
+      });
+    }
+    
     new Chart(ctx, {
       type: 'line',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: '单位净值',
-          data: navValues,
-          borderColor: '#0984e3',
-          backgroundColor: 'rgba(9, 132, 227, 0.06)',
-          borderWidth: 1.5,
-          pointRadius: 0,
-          pointHoverRadius: 4,
-          pointHoverBackgroundColor: '#0984e3',
-          fill: true,
-          tension: 0.1
-        }]
-      },
+      data: { labels: labels, datasets: datasets },
       options: {
-        responsive: true,
-        maintainAspectRatio: false,
+        responsive: true, maintainAspectRatio: false,
         interaction: { mode: 'index', intersect: false },
         plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              label: (ctx) => '净值: ' + ctx.parsed.y.toFixed(4)
-            }
-          }
+          legend: { display: datasets.length > 1, position: 'top', labels: { usePointStyle: true, boxWidth: 8, font: { size: 11 } } },
+          tooltip: { callbacks: { label: (ctx) => ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(4) } }
         },
         scales: {
           x: {
@@ -1105,6 +1403,7 @@ function showDetail(productId) {
 }
 
 // ============ Initialize ============
+loadProducts();
 renderAll();
 </script>
 </body>
