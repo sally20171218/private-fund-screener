@@ -318,9 +318,22 @@ function calcMetrics(navData) {
   // Sort by date
   navData.sort((a,b) => a.date - b.date);
   const dates = navData.map(d => d.date);
-  const navs = navData.map(d => d.nav);
+  let navs = navData.map(d => d.nav);
   const n = navs.length;
   if (n < 2) return null;
+
+  // Check for cumulative NAV and use it for all metric calculations
+  // Cumulative NAV accounts for dividends → correct returns & drawdowns
+  let hasCumNav = navData.some(d => d.cumNav !== null && d.cumNav !== undefined && !isNaN(d.cumNav));
+  let usedCumNav = false;
+  if (hasCumNav) {
+    let cumNavs = navData.map(d => d.cumNav);
+    // Verify cum_nav series is valid (all positive, monotonically general)
+    if (cumNavs.every(v => v > 0) && cumNavs.some(v => v > navs[0])) {
+      navs = cumNavs;
+      usedCumNav = true;
+    }
+  }
 
   // Detect frequency
   let totalDays = (dates[n-1] - dates[0]) / (1000*3600*24);
@@ -521,7 +534,8 @@ function calcMetrics(navData) {
     calmarRatio: calmar,
     sortinoRatio: sortino,
     dividends: dividends,
-    hasCumNav: hasCumNav
+    hasCumNav: hasCumNav,
+    usedCumNav: usedCumNav
   };
 }
 
@@ -1173,7 +1187,7 @@ function showDetail(productId) {
   }
 
   // Key metrics
-  html += `<h4 style="margin-top:24px">核心指标</h4>
+  html += `<h4 style="margin-top:24px">核心指标 ${m.usedCumNav ? '<span style="font-size:11px;color:#00b894;font-weight:400">（基于累计净值复权计算，已消除分红影响）</span>' : ''}</h4>
   <div class="metric-grid">
     <div class="metric-box">
       <div class="label">年化收益率 (CAGR)</div>
