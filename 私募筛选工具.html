@@ -1,0 +1,1410 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>私募产品筛选工具</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card-bg: #fff;
+    --text: #2c3e50;
+    --text-light: #7f8c8d;
+    --border: #e0e4e8;
+    --red: #d63031;
+    --green: #00b894;
+    --blue: #0984e3;
+    --blue-light: #dff0ff;
+    --veto-bg: #ffeaea;
+    --gold: #f39c12;
+    --radius: 8px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+  
+  .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+  
+  /* Header */
+  .header { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px 28px; margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; }
+  .header h1 { font-size: 22px; font-weight: 700; color: var(--text); }
+  .header .count-badge { background: var(--blue); color: #fff; padding: 4px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; }
+  .header .count-badge.veto { background: var(--red); }
+
+  /* Card */
+  .card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 24px; margin-bottom: 20px; }
+  .card h2 { font-size: 17px; margin-bottom: 16px; color: var(--text); font-weight: 600; }
+
+  /* Form */
+  .form-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  .form-group { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .form-group label { font-size: 13px; color: var(--text-light); font-weight: 500; }
+  .form-group input, .form-group select { padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; outline: none; transition: border-color 0.2s; }
+  .form-group input:focus, .form-group select:focus { border-color: var(--blue); }
+
+  .file-upload { border: 2px dashed var(--border); border-radius: 8px; padding: 20px; text-align: center; cursor: pointer; transition: border-color 0.2s; }
+  .file-upload:hover { border-color: var(--blue); }
+  .file-upload .icon { font-size: 32px; margin-bottom: 6px; }
+  .file-upload p { font-size: 13px; color: var(--text-light); }
+
+  .btn { padding: 8px 20px; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; font-weight: 600; transition: all 0.2s; }
+  .btn-primary { background: var(--blue); color: #fff; }
+  .btn-primary:hover { background: #0770c5; }
+  .btn-danger { background: var(--red); color: #fff; }
+  .btn-outline { background: #fff; color: var(--blue); border: 1px solid var(--blue); }
+  .btn-sm { padding: 4px 12px; font-size: 12px; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 0; margin-bottom: 16px; border-bottom: 2px solid var(--border); }
+  .tab { padding: 10px 24px; cursor: pointer; font-size: 14px; font-weight: 600; color: var(--text-light); border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.2s; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+  .tab.veto-tab.active { color: var(--red); border-bottom-color: var(--red); }
+
+  /* Table */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: #f8f9fb; text-align: left; padding: 10px 12px; font-weight: 600; color: var(--text-light); border-bottom: 2px solid var(--border); white-space: nowrap; cursor: pointer; user-select: none; }
+  th:hover { color: var(--text); }
+  th .sort-arrow { font-size: 10px; margin-left: 2px; }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  tr:hover td { background: #f8f9fb; }
+  tr.veto-row td { background: var(--veto-bg); }
+
+  .positive { color: var(--red); font-weight: 600; }
+  .negative { color: var(--green); font-weight: 600; }
+  .rank-badge { display: inline-block; width: 24px; height: 24px; text-align: center; line-height: 24px; border-radius: 50%; font-size: 12px; font-weight: 700; color: #fff; }
+  .rank-1 { background: var(--gold); }
+  .rank-2 { background: #b2bec3; }
+  .rank-3 { background: #d4a574; }
+  .rank-rest { background: #dfe6e9; color: var(--text-light); }
+
+  .product-name { font-weight: 600; color: var(--blue); cursor: pointer; }
+  .product-name:hover { text-decoration: underline; }
+
+  /* Detail Modal */
+  .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 100; justify-content: center; align-items: center; }
+  .modal-overlay.show { display: flex; }
+  .modal { background: var(--card-bg); border-radius: 12px; max-width: 900px; width: 95%; max-height: 85vh; overflow-y: auto; padding: 28px; box-shadow: 0 8px 30px rgba(0,0,0,0.15); }
+  .modal h3 { font-size: 20px; margin-bottom: 20px; }
+  .modal-close { float: right; background: none; border: none; font-size: 24px; cursor: pointer; color: var(--text-light); }
+  .modal-close:hover { color: var(--text); }
+
+  /* Heatmap */
+  .heatmap { display: grid; grid-template-columns: 50px repeat(12, 1fr); gap: 2px; font-size: 12px; margin-top: 12px; }
+  .heatmap .hm-header { text-align: center; font-weight: 600; color: var(--text-light); padding: 4px; }
+  .heatmap .hm-year { text-align: right; font-weight: 600; color: var(--text-light); padding: 4px 8px 4px 4px; }
+  .heatmap .hm-cell { aspect-ratio: 1; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 11px; color: #fff; }
+
+  /* Annual Detail Table */
+  .metric-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 16px; }
+  .metric-box { background: #f8f9fb; border-radius: 8px; padding: 14px; }
+  .metric-box .label { font-size: 12px; color: var(--text-light); }
+  .metric-box .value { font-size: 20px; font-weight: 700; margin-top: 4px; }
+
+  /* Drawdown Timeline */
+  .dd-timeline { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; font-size: 13px; }
+  .dd-timeline .dd-node { background: #f8f9fb; border-radius: 8px; padding: 8px 14px; text-align: center; }
+  .dd-timeline .dd-arrow { font-size: 18px; color: var(--text-light); }
+  .dd-timeline .dd-date { font-weight: 600; }
+  .dd-timeline .dd-desc { font-size: 11px; color: var(--text-light); }
+
+  .empty-state { text-align: center; padding: 60px 20px; color: var(--text-light); }
+  .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+  .empty-state p { font-size: 14px; }
+
+  .warning-box { background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px; padding: 12px 16px; font-size: 13px; color: #856404; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  .warning-box .icon { font-size: 18px; }
+
+  .tag { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+  .tag-veto { background: var(--veto-bg); color: var(--red); }
+  .tag-pass { background: #e8f8f5; color: var(--green); }
+  .tag-daily { background: var(--blue-light); color: var(--blue); }
+  .tag-weekly { background: #f3e5ff; color: #6c5ce7; }
+
+  @media (max-width: 768px) {
+    .form-row { flex-direction: column; }
+    .container { padding: 10px; }
+    table { font-size: 11px; }
+    th, td { padding: 6px 8px; }
+  }
+
+  .chart-container { margin-top: 20px; background: #fff; border-radius: 8px; padding: 16px; border: 1px solid var(--border); position: relative; }
+  .chart-container canvas { width: 100% !important; height: 350px !important; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <h1>📊 私募产品筛选工具</h1>
+    <div>
+      <span class="count-badge" id="countBadge">产品: 0</span>
+      <span class="count-badge veto" id="vetoBadge" style="margin-left:8px">否决: 0</span>
+    </div>
+  </div>
+
+  <!-- Import Card -->
+  <div class="card" id="importCard">
+    <h2>📥 添加产品</h2>
+    
+    <div class="form-row" style="margin-bottom:16px">
+      <div class="form-group" style="flex:1;min-width:150px">
+        <label>管理人名称 *</label>
+        <input type="text" id="mgrName" placeholder="如：林园投资">
+      </div>
+      <div class="form-group" style="flex:1;min-width:150px">
+        <label>公司全称</label>
+        <input type="text" id="company" placeholder="如：深圳市林园投资管理有限责任公司">
+      </div>
+      <div class="form-group" style="min-width:160px">
+        <label>近三年协会处罚</label>
+        <select id="penalty">
+          <option value="no">无处罚</option>
+          <option value="yes">有处罚（一票否决）</option>
+        </select>
+      </div>
+      <div class="form-group" style="flex:2;min-width:200px">
+        <label>备注（选填）</label>
+        <input type="text" id="notes" placeholder="处罚原因、策略类型等">
+      </div>
+    </div>
+
+    <div class="file-upload" id="fileDrop">
+      <div class="icon">📁</div>
+      <p><strong>点击上传</strong>或拖拽 Excel 净值文件到此处</p>
+      <p style="font-size:12px">支持 .xlsx / .xls / .csv | 第一列：日期，第二列：单位净值</p>
+      <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none">
+    </div>
+    <div id="fileName" style="font-size:13px;color:var(--blue);margin-top:8px;display:none"></div>
+
+    <div style="margin-top:16px;display:flex;gap:12px">
+      <button class="btn btn-primary" id="btnAdd">➕ 添加产品</button>
+      <button class="btn btn-outline" id="btnDemo">🔬 加载演示数据</button>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div class="card" id="resultsCard">
+    <div class="tabs">
+      <div class="tab active" data-tab="overview">📋 产品总览</div>
+      <div class="tab" data-tab="compare">📈 净值对比</div>
+      <div class="tab" data-tab="detail">🔍 单产品详情</div>
+      <div class="tab veto-tab" data-tab="veto">⛔ 一票否决产品</div>
+    </div>
+
+    <!-- Tab: Overview -->
+    <div class="tab-content" id="tab-overview">
+      <div class="empty-state" id="emptyOverview">
+        <div class="icon">📭</div>
+        <p>暂无产品数据，请先添加产品</p>
+      </div>
+      <div id="overviewContent" style="display:none">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;padding:12px;background:#f8f9fb;border-radius:8px">
+          <span style="font-weight:600;font-size:13px">🔍 筛选:</span>
+          <label style="font-size:12px">卡玛≥<input type="number" id="filterCalmar" value="0" step="0.1" style="width:55px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" onchange="renderOverview()"></label>
+          <label style="font-size:12px">回撤≤<input type="number" id="filterDD" value="100" step="0.01" style="width:55px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" onchange="renderOverview()">%</label>
+          <label style="font-size:12px">索提诺≥<input type="number" id="filterSortino" value="0" step="0.1" style="width:55px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px" onchange="renderOverview()"></label>
+          <button class="btn btn-outline btn-sm" onclick="exportCSV()">📥 导出CSV</button>
+          <button class="btn btn-outline btn-sm" onclick="resetFilters()">🔄 重置</button>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;padding:12px;background:#f8f9fb;border-radius:8px">
+          <span style="font-weight:600;font-size:13px">⚖️ 评分权重:</span>
+          <label style="font-size:11px">卡玛<input type="range" id="wCalmar" min="0" max="100" value="35" style="width:60px" oninput="document.getElementById('wCalmarVal').textContent=this.value;renderOverview()"><span id="wCalmarVal" style="font-size:11px">35</span></label>
+          <label style="font-size:11px">索提诺<input type="range" id="wSortino" min="0" max="100" value="30" style="width:60px" oninput="document.getElementById('wSortinoVal').textContent=this.value;renderOverview()"><span id="wSortinoVal" style="font-size:11px">30</span></label>
+          <label style="font-size:11px">低回撤<input type="range" id="wLowDD" min="0" max="100" value="20" style="width:60px" oninput="document.getElementById('wLowDDVal').textContent=this.value;renderOverview()"><span id="wLowDDVal" style="font-size:11px">20</span></label>
+          <label style="font-size:11px">胜率<input type="range" id="wWinRate" min="0" max="100" value="15" style="width:60px" oninput="document.getElementById('wWinRateVal').textContent=this.value;renderOverview()"><span id="wWinRateVal" style="font-size:11px">15</span></label>
+        </div>
+        <div class="warning-box" id="noVetoWarning" style="display:none">
+          <span class="icon">✅</span>所有已添加产品均通过合规筛选
+        </div>
+        <div style="overflow-x:auto">
+          <table id="overviewTable"></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Compare -->
+    <div class="tab-content" id="tab-compare" style="display:none">
+      <div class="empty-state" id="emptyCompare">
+        <div class="icon">📈</div>
+        <p>需要至少2个产品才能对比</p>
+      </div>
+      <div id="compareContent" style="display:none">
+        <div class="chart-container">
+          <canvas id="compareChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Detail -->
+    <div class="tab-content" id="tab-detail" style="display:none">
+      <div class="empty-state">
+        <div class="icon">🔍</div>
+        <p>点击总览表中的 <strong>产品名称</strong> 查看详细分析</p>
+        <p style="font-size:12px;margin-top:8px">或从以下列表选择：</p>
+        <div id="detailSelector" style="margin-top:8px"></div>
+      </div>
+    </div>
+
+    <!-- Tab: Veto -->
+    <div class="tab-content" id="tab-veto" style="display:none">
+      <div class="empty-state" id="emptyVeto">
+        <div class="icon">✅</div>
+        <p>暂无一票否决产品</p>
+      </div>
+      <div id="vetoContent" style="display:none">
+        <table id="vetoTable"></table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ============ 数据存储 ============
+let products = [];
+const STORAGE_KEY = 'fund_screener_products';
+
+function saveProducts() {
+  try {
+    let data = products.map(p => ({
+      id: p.id, managerName: p.managerName, company: p.company,
+      penalty: p.penalty, penaltyNote: p.penaltyNote, notes: p.notes,
+      navData: p.navData.map(d => ({ date: d.date.getTime(), nav: d.nav, cumNav: d.cumNav }))
+    }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch(e) { console.warn('storage save failed:', e.message); }
+}
+
+function loadProducts() {
+  try {
+    let raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    let data = JSON.parse(raw);
+    products = data.map(d => {
+      let navData = d.navData.map(x => ({ date: new Date(x.date), nav: x.nav, cumNav: x.cumNav }));
+      let m = calcMetrics(navData);
+      return { ...d, navData: navData, metrics: m };
+    }).filter(p => p.metrics);
+  } catch(e) { console.warn('storage load failed:', e.message); }
+}
+
+function deleteProduct(id) {
+  if (!confirm('确定删除该产品？此操作不可撤销。')) return;
+  products = products.filter(p => p.id !== id);
+  saveProducts();
+  renderAll();
+}
+
+// ============ 工具函数 ============
+function parseDate(val) {
+  if (val instanceof Date) return val;
+  if (typeof val === 'number') {
+    // Excel serial date
+    return new Date((val - 25569) * 86400 * 1000);
+  }
+  const d = new Date(val);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function fmtDate(d) { return d.toISOString().slice(0,10); }
+function fmtPct(v) { return (v * 100).toFixed(2) + '%'; }
+
+// ============ 净值计算核心 ============
+function calcMetrics(navData) {
+  // Sort by date
+  navData.sort((a,b) => a.date - b.date);
+  const dates = navData.map(d => d.date);
+  const navs = navData.map(d => d.nav);
+  const n = navs.length;
+  if (n < 2) return null;
+
+  // Detect frequency
+  let totalDays = (dates[n-1] - dates[0]) / (1000*3600*24);
+  let avgGap = totalDays / (n - 1);
+  let frequency = avgGap > 4 ? 'weekly' : 'daily';
+  let annFactor = frequency === 'daily' ? 252 : 52;
+
+  // Returns
+  let returns = [];
+  for (let i = 1; i < n; i++) {
+    returns.push(navs[i] / navs[i-1] - 1);
+  }
+
+  // Group by year
+  let yearData = {};
+  for (let i = 0; i < n; i++) {
+    let yr = dates[i].getFullYear();
+    if (!yearData[yr]) yearData[yr] = { dates: [], navs: [] };
+    yearData[yr].dates.push(dates[i]);
+    yearData[yr].navs.push(navs[i]);
+  }
+
+  // Annual returns
+  let annualReturns = [];
+  for (let yr of Object.keys(yearData).sort()) {
+    let d = yearData[yr];
+    if (d.navs.length >= 2) {
+      let ret = d.navs[d.navs.length-1] / d.navs[0] - 1;
+      annualReturns.push({ year: parseInt(yr), return: ret });
+    }
+  }
+
+  // Monthly returns
+  let monthData = {};
+  for (let i = 0; i < n; i++) {
+    let key = dates[i].getFullYear() + '-' + String(dates[i].getMonth()+1).padStart(2,'0');
+    if (!monthData[key]) monthData[key] = { firstNav: navs[i], lastNav: navs[i], firstDate: dates[i] };
+    monthData[key].lastNav = navs[i];
+  }
+  let monthlyReturns = [];
+  for (let [key, d] of Object.entries(monthData)) {
+    monthlyReturns.push({ yearMonth: key, return: d.lastNav / d.firstNav - 1 });
+  }
+  monthlyReturns.sort((a,b) => a.yearMonth.localeCompare(b.yearMonth));
+
+  // Win rate
+  let positiveMonths = monthlyReturns.filter(m => m.return > 0).length;
+  let monthWinRate = positiveMonths / monthlyReturns.length;
+
+  // Max drawdown (historical)
+  let maxDD = 0, peakNav = navs[0], peakIdx = 0, troughIdx = 0, peakDate = dates[0], troughDate = dates[0];
+  for (let i = 1; i < n; i++) {
+    if (navs[i] > peakNav) {
+      peakNav = navs[i];
+      peakIdx = i;
+    }
+    let dd = (peakNav - navs[i]) / peakNav;
+    if (dd > maxDD) {
+      maxDD = dd;
+      troughIdx = i;
+      peakDate = dates[peakIdx];
+      troughDate = dates[i];
+    }
+  }
+
+  // Recovery from max drawdown
+  let recoveryDate = null, recoveryDays = null, totalDDDays = null, recovered = false;
+  let peakVal = navs.filter((_,i) => i <= troughIdx).reduce((a,b) => Math.max(a,b), 0);
+  // Find the peak that corresponds to the max drawdown
+  let ddPeakIdx = 0;
+  let runningPeak = navs[0];
+  let runningPeakIdx = 0;
+  for (let i = 0; i <= troughIdx; i++) {
+    if (navs[i] > runningPeak) { runningPeak = navs[i]; runningPeakIdx = i; }
+  }
+  ddPeakIdx = runningPeakIdx;
+  peakDate = dates[ddPeakIdx];
+  peakVal = navs[ddPeakIdx];
+  
+  totalDDDays = Math.round((troughDate - peakDate) / (1000*3600*24));
+  
+  for (let i = troughIdx + 1; i < n; i++) {
+    if (navs[i] >= peakVal) {
+      recoveryDate = dates[i];
+      recovered = true;
+      break;
+    }
+  }
+  if (recovered) {
+    recoveryDays = Math.round((recoveryDate - troughDate) / (1000*3600*24));
+  } else {
+    // Not recovered yet - calculate days since trough
+    recoveryDays = Math.round((dates[n-1] - troughDate) / (1000*3600*24));
+  }
+
+  let maxDDInfo = {
+    peakDate: fmtDate(peakDate),
+    troughDate: fmtDate(troughDate),
+    recoveryDate: recovered ? fmtDate(recoveryDate) : null,
+    drawdown: maxDD,
+    totalDays: totalDDDays,
+    recoveryDays: recoveryDays,
+    recovered: recovered
+  };
+
+  // Annual max drawdowns
+  let annualDDs = [];
+  for (let yr of Object.keys(yearData).sort()) {
+    let d = yearData[yr];
+    let yNavs = d.navs, yDates = d.dates;
+    let yMaxDD = 0, yPeak = yNavs[0], yPeakIdx = 0, yTroughIdx = 0;
+    let yPeakDate = yDates[0], yTroughDate = yDates[0];
+    for (let i = 1; i < yNavs.length; i++) {
+      if (yNavs[i] > yPeak) { yPeak = yNavs[i]; yPeakIdx = i; yPeakDate = yDates[i]; }
+      let dd = (yPeak - yNavs[i]) / yPeak;
+      if (dd > yMaxDD) { yMaxDD = dd; yTroughIdx = i; yTroughDate = yDates[i]; }
+    }
+    let yRecovDays = null;
+    if (yMaxDD > 0 && yTroughIdx < yNavs.length - 1) {
+      yRecovDays = Math.round((yDates[yDates.length-1] - yTroughDate) / (1000*3600*24));
+      // Check if recovered within year
+      for (let i = yTroughIdx + 1; i < yNavs.length; i++) {
+        if (yNavs[i] >= yPeak) { yRecovDays = Math.round((yDates[i] - yTroughDate) / (1000*3600*24)); break; }
+      }
+    }
+    annualDDs.push({ year: parseInt(yr), maxDrawdown: yMaxDD, recoveryDays: yRecovDays });
+  }
+
+  // Annualized volatility
+  let meanRet = returns.reduce((a,b) => a+b, 0) / returns.length;
+  let variance = returns.reduce((a,b) => a + (b - meanRet)**2, 0) / (returns.length - 1);
+  let annVol = Math.sqrt(variance) * Math.sqrt(annFactor);
+
+  // Overall annualized return (CAGR)
+  let years = totalDays / 365.25;
+  let cagr = years > 0 ? Math.pow(navs[n-1] / navs[0], 1 / years) - 1 : 0;
+
+  // Calmar ratio
+  let calmar = maxDD > 0 ? cagr / maxDD : 0;
+
+  // Sortino ratio (downside deviation only)
+  let negReturns = returns.filter(r => r < 0);
+  let sortino = 0;
+  if (negReturns.length > 0) {
+    let downVar = negReturns.reduce((a,b) => a + b*b, 0) / returns.length;
+    let downDev = Math.sqrt(downVar) * Math.sqrt(annFactor);
+    sortino = downDev > 0 ? cagr / downDev : 0;
+  } else { sortino = cagr > 0 ? 99 : 0; }
+
+  // Dividend detection (cumulative vs unit NAV ratio analysis)
+  let dividends = [];
+  let hasCumNav = navData.some(d => d.cumNav !== null && d.cumNav !== undefined && !isNaN(d.cumNav));
+  if (hasCumNav && n >= 4) {
+    let cumNavs = navData.map(d => d.cumNav);
+    let ratios = [];
+    for (let i = 0; i < n; i++) {
+      if (cumNavs[i] && navs[i] > 0) ratios.push(cumNavs[i] / navs[i]);
+      else ratios.push(null);
+    }
+    for (let i = 1; i < n; i++) {
+      if (ratios[i] && ratios[i-1]) {
+        let ratioChg = (ratios[i] / ratios[i-1] - 1) * 100;
+        // Detect dividend: ratio jump > 1% (filter out daily noise)
+        if (ratioChg > 1) {
+          let mr = cumNavs[i] / cumNavs[i-1] - 1;
+          let expectedUnit = navs[i-1] * (1 + mr);
+          let divPerShare = expectedUnit - navs[i];
+          if (divPerShare > 0.001) {
+            let divRate = divPerShare / navs[i-1] * 100;
+            dividends.push({
+              exDate: fmtDate(dates[i]),
+              prevDate: fmtDate(dates[i-1]),
+              prevUnitNav: navs[i-1],
+              exUnitNav: navs[i],
+              prevCumNav: cumNavs[i-1],
+              exCumNav: cumNavs[i],
+              divPerShare: divPerShare,
+              divRate: divRate,
+              marketReturn: mr
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    dataPoints: n,
+    dateRange: fmtDate(dates[0]) + ' ~ ' + fmtDate(dates[n-1]),
+    frequency: frequency,
+    annualReturns: annualReturns,
+    monthlyReturns: monthlyReturns,
+    monthWinRate: monthWinRate,
+    maxDrawdown: maxDDInfo,
+    annualDrawdowns: annualDDs,
+    annualizedVolatility: annVol,
+    cagr: cagr,
+    calmarRatio: calmar,
+    sortinoRatio: sortino,
+    dividends: dividends,
+    hasCumNav: hasCumNav
+  };
+}
+
+// ============ 文件上传处理 ============
+let uploadedNavData = null;
+
+document.getElementById('fileDrop').addEventListener('click', () => {
+  document.getElementById('fileInput').click();
+});
+
+document.getElementById('fileInput').addEventListener('change', handleFile);
+
+['dragenter','dragover','dragleave','drop'].forEach(e => {
+  document.getElementById('fileDrop').addEventListener(e, (ev) => ev.preventDefault());
+});
+document.getElementById('fileDrop').addEventListener('drop', (ev) => {
+  handleFile({ target: { files: ev.dataTransfer.files } });
+});
+
+function handleFile(e) {
+  let file = e.target.files?.[0];
+  if (!file) return;
+  document.getElementById('fileName').style.display = 'block';
+  document.getElementById('fileName').textContent = '📎 ' + file.name + ' (读取中...)';
+  
+  let reader = new FileReader();
+  reader.onload = function(ev) {
+    try {
+      let wb = XLSX.read(ev.target.result, { type: 'array' });
+      let ws = wb.Sheets[wb.SheetNames[0]];
+      let data = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+      // Auto-detect columns by scanning first 15 rows
+      let sampleRows = Math.min(data.length, 15);
+      let colScores = {}; // colIdx -> { dateCount, numCount, headerHint }
+      for (let i = 0; i < sampleRows; i++) {
+        let row = data[i];
+        if (!row) continue;
+        for (let j = 0; j < row.length; j++) {
+          if (!colScores[j]) colScores[j] = { dateCount: 0, numCount: 0 };
+          let val = row[j];
+          if (val === null || val === undefined || val === '') continue;
+          if (parseDate(val)) colScores[j].dateCount++;
+          let num = parseFloat(val);
+          if (!isNaN(num) && num > 0) colScores[j].numCount++;
+        }
+      }
+
+      // Pick best date column and best NAV column
+      let dateCol = -1, navCol = -1, cumNavCol = -1;
+      let scored = Object.entries(colScores).map(([col, s]) => ({col: parseInt(col), ...s}));
+      scored.sort((a,b) => b.dateCount - a.dateCount);
+      dateCol = scored[0]?.col ?? 0;
+      
+      // NAV columns sorted by numCount
+      let numCols = scored.filter(s => s.col !== dateCol).sort((a,b) => b.numCount - a.numCount);
+      navCol = numCols[0]?.col ?? 1;
+      
+      // Try to detect cumulative NAV: if there are >=3 numeric columns, 
+      // the one with higher values (likely cumulative > unit) is cum_nav
+      if (numCols.length >= 2) {
+        let secondNumCol = numCols[1].col;
+        // Check if second column has consistently larger values (cumulative NAV)
+        let cumLargerCount = 0, totalCheck = 0;
+        for (let i = sampleRows; i < Math.min(data.length, sampleRows + 20); i++) {
+          let row = data[i]; if (!row) continue;
+          let v1 = parseFloat(row[navCol]), v2 = parseFloat(row[secondNumCol]);
+          if (!isNaN(v1) && !isNaN(v2) && v1 > 0 && v2 > 0) {
+            totalCheck++;
+            if (v2 > v1 * 1.5) cumLargerCount++;
+          }
+        }
+        if (totalCheck > 0 && cumLargerCount / totalCheck > 0.7) {
+          cumNavCol = secondNumCol;
+        }
+      }
+
+      // Find start row (skip header rows)
+      let startRow = 0;
+      for (let i = 0; i < Math.min(data.length, 10); i++) {
+        let row = data[i];
+        if (!row) continue;
+        let d = parseDate(row[dateCol]);
+        let n = parseFloat(row[navCol]);
+        if (d && !isNaN(n) && n > 0) { startRow = i; break; }
+      }
+
+      uploadedNavData = [];
+      let hasCumNav = false;
+      for (let i = startRow; i < data.length; i++) {
+        let row = data[i];
+        if (!row || row.length <= Math.max(dateCol, navCol)) continue;
+        let d = parseDate(row[dateCol]);
+        let nav = parseFloat(row[navCol]);
+        if (d && !isNaN(nav) && nav > 0) {
+          let cumNav = cumNavCol >= 0 ? parseFloat(row[cumNavCol]) : null;
+          if (cumNav !== null && !isNaN(cumNav) && cumNav > 0) hasCumNav = true;
+          uploadedNavData.push({ date: d, nav: nav, cumNav: cumNav });
+        }
+      }
+
+      if (uploadedNavData.length < 2) {
+        alert('未能从文件中读取到有效净值数据（至少需要2行：日期 + 单位净值）');
+        uploadedNavData = null;
+        document.getElementById('fileName').style.display = 'none';
+      } else {
+        let msg = '📎 ' + file.name + ' ✅ 已读取 ' + uploadedNavData.length + ' 条净值数据';
+        if (hasCumNav) msg += '（含累计净值，可检测分红）';
+        document.getElementById('fileName').textContent = msg;
+      }
+    } catch(err) {
+      alert('文件解析失败: ' + err.message);
+      uploadedNavData = null;
+      document.getElementById('fileName').style.display = 'none';
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ============ 添加产品 ============
+document.getElementById('btnAdd').addEventListener('click', () => {
+  let mgrName = document.getElementById('mgrName').value.trim();
+  if (!mgrName) { alert('请输入管理人名称'); return; }
+  if (!uploadedNavData) { alert('请先上传净值Excel文件'); return; }
+
+  let penalty = document.getElementById('penalty').value === 'yes';
+  let company = document.getElementById('company').value.trim();
+  let notes = document.getElementById('notes').value.trim();
+
+  let metrics = calcMetrics(uploadedNavData);
+  if (!metrics) { alert('净值数据不足以计算指标（至少需要2个数据点）'); return; }
+
+  products.push({
+    id: Date.now(),
+    managerName: mgrName,
+    company: company || mgrName,
+    penalty: penalty,
+    penaltyNote: penalty ? (notes || '近三年有协会处罚') : '',
+    notes: penalty ? '' : notes,
+    navData: uploadedNavData.map(d => ({ date: d.date, nav: d.nav, cumNav: d.cumNav })),
+    metrics: metrics
+  });
+  saveProducts();
+
+  // Reset
+  document.getElementById('mgrName').value = '';
+  document.getElementById('company').value = '';
+  document.getElementById('penalty').value = 'no';
+  document.getElementById('notes').value = '';
+  document.getElementById('fileName').style.display = 'none';
+  document.getElementById('fileInput').value = '';
+  uploadedNavData = null;
+
+  renderAll();
+});
+
+// ============ 演示数据 ============
+document.getElementById('btnDemo').addEventListener('click', () => {
+  let demoProducts = [
+    {
+      name: '锐进一号', company: '锐进投资管理有限公司',
+      // 一只稳健型产品：5年，年化12%，回撤控制好
+      startNav: 1.0, 
+      monthlyNoise: () => (Math.random() - 0.45) * 0.03, // 偏正
+      trend: 0.009  // 月均0.9%
+    },
+    {
+      name: '宏远成长', company: '宏远资产管理有限公司',
+      // 高收益高波动：年化25%，但回撤也大
+      startNav: 1.0,
+      monthlyNoise: () => (Math.random() - 0.5) * 0.08,
+      trend: 0.018
+    },
+    {
+      name: '天元均衡', company: '天元基金管理有限公司',
+      // 中庸型：年化8%，低波动
+      startNav: 1.0,
+      monthlyNoise: () => (Math.random() - 0.48) * 0.02,
+      trend: 0.006
+    },
+    {
+      name: '鼎盛策略', company: '鼎盛私募基金管理有限公司',
+      // 大起大落型：有过巨大回撤
+      startNav: 1.0,
+      monthlyNoise: () => (Math.random() - 0.5) * 0.10,
+      trend: 0.005
+    }
+  ];
+
+  let penaltyMgr = {
+    name: '问题资管', company: '问题资产管理有限公司',
+    startNav: 1.0, monthlyNoise: () => (Math.random() - 0.5) * 0.03, trend: 0.004
+  };
+
+  // Generate 5 years of weekly data
+  let startDate = new Date(2021, 0, 4);
+  let endDate = new Date(2025, 11, 29);
+
+  function genNavData(startNav, noiseFn, trend, start, end) {
+    let data = [];
+    let d = new Date(start);
+    let nav = startNav;
+    // Add a big drawdown and recovery in 2023
+    let bigDD = null;
+    while (d <= end) {
+      if (d.getDay() === 5) { // Fridays
+        data.push({ date: new Date(d), nav: Math.round(nav * 10000) / 10000 });
+      }
+      // Weekly update
+      if (d.getDay() === 5) {
+        let r = noiseFn() + trend / 4;
+        // Inject a big drawdown in mid 2023
+        if (d.getFullYear() === 2023 && d.getMonth() >= 5 && d.getMonth() <= 8 && !bigDD) {
+          bigDD = true;
+          // 30% drawdown over 8 weeks, then recovery
+        }
+        nav = nav * (1 + r);
+        if (nav < 0.5) nav = 0.5;
+      }
+      d.setDate(d.getDate() + 1);
+    }
+    return data;
+  }
+
+  // Specialized data for each product to make them distinct
+  function genCustomNav(startNav, start, end, config) {
+    let data = [];
+    let d = new Date(start);
+    let nav = startNav;
+    
+    while (d <= end) {
+      if (d.getDay() === 5) {
+        data.push({ date: new Date(d), nav: Math.round(nav * 10000) / 10000 });
+        let monthFactor = config.monthTrend ? config.monthTrend[d.getMonth()] : config.trend / 4;
+        let r = config.noise() + monthFactor;
+        
+        // Special events
+        if (config.bigDD) {
+          let ddStart = new Date(config.bigDD.start);
+          let ddEnd = new Date(config.bigDD.end);
+          if (d >= ddStart && d <= ddEnd) {
+            r -= 0.03; // severe drawdown
+          }
+        }
+        if (config.strongYear && d.getFullYear() === config.strongYear) {
+          r += 0.005;
+        }
+        
+        nav = nav * (1 + r);
+        if (nav < 0.5) nav = 0.5;
+      }
+      d.setDate(d.getDate() + 1);
+    }
+    return data;
+  }
+
+  // 锐进一号 - steady growth, mild drawdown in 2022
+  let p1 = genCustomNav(1.0, startDate, endDate, {
+    trend: 0.009, noise: () => (Math.random() - 0.45) * 0.025,
+    bigDD: { start: '2022-03-01', end: '2022-06-30' }
+  });
+
+  // 宏远成长 - high growth, big drawdown in 2023  
+  let p2 = genCustomNav(1.0, startDate, endDate, {
+    trend: 0.018, noise: () => (Math.random() - 0.48) * 0.06,
+    bigDD: { start: '2023-05-01', end: '2023-09-30' }
+  });
+
+  // 天元均衡 - low volatility
+  let p3 = genCustomNav(1.0, startDate, endDate, {
+    trend: 0.006, noise: () => (Math.random() - 0.48) * 0.015
+  });
+
+  // 鼎盛策略 - volatile, huge 2023 crash
+  let p4 = genCustomNav(1.0, startDate, endDate, {
+    trend: 0.005, noise: () => (Math.random() - 0.5) * 0.07,
+    bigDD: { start: '2023-04-01', end: '2023-11-30' }
+  });
+
+  // 问题资管 (veto)
+  let p5 = genCustomNav(1.0, startDate, endDate, {
+    trend: 0.004, noise: () => (Math.random() - 0.5) * 0.02
+  });
+
+  let demoList = [
+    { name: '锐进一号', company: '锐进投资管理有限公司', penalty: false, notes: '稳健型，回撤控制好', data: p1 },
+    { name: '宏远成长', company: '宏远资产管理有限公司', penalty: false, notes: '高收益高波动', data: p2 },
+    { name: '天元均衡', company: '天元基金管理有限公司', penalty: false, notes: '低波动稳健', data: p3 },
+    { name: '鼎盛策略', company: '鼎盛私募基金管理有限公司', penalty: false, notes: '波动较大', data: p4 },
+    { name: '问题资管', company: '问题资产管理有限公司', penalty: true, notes: '2024年因违规宣传被协会处罚', data: p5 }
+  ];
+
+  products = [];
+  for (let demo of demoList) {
+    let m = calcMetrics(demo.data);
+    if (m) {
+      products.push({
+        id: Date.now() + Math.random(),
+        managerName: demo.name,
+        company: demo.company,
+        penalty: demo.penalty,
+        penaltyNote: demo.penalty ? demo.notes : '',
+        notes: demo.penalty ? '' : demo.notes,
+        navData: demo.data,
+        metrics: m
+      });
+    }
+  }
+  saveProducts();
+  renderAll();
+});
+
+// ============ 渲染 ============
+function renderAll() {
+  // Badges
+  let passProducts = products.filter(p => !p.penalty);
+  let vetoProducts = products.filter(p => p.penalty);
+  document.getElementById('countBadge').textContent = '产品: ' + passProducts.length;
+  document.getElementById('vetoBadge').textContent = '否决: ' + vetoProducts.length;
+
+  renderOverview();
+  renderCompare();
+  renderDetailSelector();
+  renderVeto();
+}
+
+function renderOverview() {
+  let passProducts = products.filter(p => !p.penalty);
+  let container = document.getElementById('overviewContent');
+  let empty = document.getElementById('emptyOverview');
+  let warning = document.getElementById('noVetoWarning');
+  
+  if (passProducts.length === 0) {
+    container.style.display = 'none'; empty.style.display = 'block'; return;
+  }
+  empty.style.display = 'none'; container.style.display = 'block';
+
+  // Apply filters
+  let fCalmar = parseFloat(document.getElementById('filterCalmar')?.value || 0);
+  let fDD = parseFloat(document.getElementById('filterDD')?.value || 100) / 100;
+  let fSortino = parseFloat(document.getElementById('filterSortino')?.value || 0);
+  let filtered = passProducts.filter(p => 
+    p.metrics.calmarRatio >= fCalmar && 
+    p.metrics.maxDrawdown.drawdown <= fDD &&
+    p.metrics.sortinoRatio >= fSortino
+  );
+
+  // Weighted scoring
+  let wc = parseInt(document.getElementById('wCalmar')?.value || 35);
+  let ws = parseInt(document.getElementById('wSortino')?.value || 30);
+  let wd = parseInt(document.getElementById('wLowDD')?.value || 20);
+  let ww = parseInt(document.getElementById('wWinRate')?.value || 15);
+  let totalW = wc + ws + wd + ww || 1;
+
+  // Normalize metrics for scoring
+  let allCalmar = filtered.map(p => p.metrics.calmarRatio); 
+  let allSortino = filtered.map(p => p.metrics.sortinoRatio);
+  let allDD = filtered.map(p => p.metrics.maxDrawdown.drawdown);
+  let allWR = filtered.map(p => p.metrics.monthWinRate);
+  let maxC = Math.max(...allCalmar, 0.01), maxS = Math.max(...allSortino, 0.01);
+  let maxDDv = Math.max(...allDD, 0.01);
+
+  filtered.forEach(p => {
+    p._score = (
+      wc * (p.metrics.calmarRatio / maxC) +
+      ws * (p.metrics.sortinoRatio / maxS) +
+      wd * (1 - p.metrics.maxDrawdown.drawdown / maxDDv) +
+      ww * p.metrics.monthWinRate
+    ) / totalW * 100;
+  });
+
+  // Sort by score descending
+  filtered.sort((a,b) => b._score - a._score);
+
+  warning.style.display = products.filter(p => p.penalty).length === 0 ? 'block' : 'none';
+
+  let html = `<thead><tr>
+    <th>排名</th><th>产品名称</th><th>公司</th><th>数据周期</th><th>频率</th>
+    <th onclick="sortOverview('cagr')">年化收益</th>
+    <th onclick="sortOverview('dd')">最大回撤</th>
+    <th onclick="sortOverview('ddRecovery')">修复天数</th>
+    <th onclick="sortOverview('vol')">波动率</th>
+    <th onclick="sortOverview('calmar')">卡玛</th>
+    <th onclick="sortOverview('sortino')">索提诺</th>
+    <th>胜率</th><th>综合分</th><th>标签</th><th>操作</th>
+  </tr></thead><tbody>`;
+
+  if (filtered.length === 0) {
+    html += '<tr><td colspan="16" style="text-align:center;color:var(--text-light);padding:20px">没有产品符合当前筛选条件</td></tr>';
+  } else {
+    filtered.forEach((p, idx) => {
+      let m = p.metrics;
+      let rank = idx + 1;
+      let rankClass = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : rank === 3 ? 'rank-3' : 'rank-rest';
+      html += `<tr>
+        <td><span class="rank-badge ${rankClass}">${rank}</span></td>
+        <td><span class="product-name" onclick="showDetail(${p.id})">${p.managerName}</span></td>
+        <td>${p.company}</td>
+        <td>${m.dateRange}</td>
+        <td><span class="tag tag-${m.frequency}">${m.frequency === 'daily' ? '日频' : '周频'}</span></td>
+        <td class="${m.cagr >= 0 ? 'positive' : 'negative'}">${fmtPct(m.cagr)}</td>
+        <td class="negative">-${fmtPct(m.maxDrawdown.drawdown)}</td>
+        <td>${m.maxDrawdown.recovered ? m.maxDrawdown.recoveryDays + '天' : '未修复'}</td>
+        <td>${fmtPct(m.annualizedVolatility)}</td>
+        <td class="${m.calmarRatio >= 1 ? 'positive' : 'negative'}">${m.calmarRatio.toFixed(2)}</td>
+        <td class="${m.sortinoRatio >= 1 ? 'positive' : 'negative'}">${m.sortinoRatio.toFixed(2)}</td>
+        <td>${fmtPct(m.monthWinRate)}</td>
+        <td style="font-weight:700">${p._score.toFixed(1)}</td>
+        <td>${p.notes ? '<span class="tag tag-pass">' + p.notes + '</span>' : ''}</td>
+        <td><button class="btn btn-outline btn-sm" style="color:#d63031;border-color:#d63031" onclick="event.stopPropagation();deleteProduct(${p.id})">删除</button></td>
+      </tr>`;
+    });
+  }
+  html += '</tbody>';
+  document.getElementById('overviewTable').innerHTML = html;
+}
+
+// Column-click sort
+function sortOverview(col) {
+  if (overviewSortCol === col) overviewSortAsc = !overviewSortAsc;
+  else { overviewSortCol = col; overviewSortAsc = false; }
+  renderOverviewSorted(col, overviewSortAsc);
+}
+let overviewSortCol = 'calmar';
+let overviewSortAsc = false;
+
+function renderOverviewSorted(col, asc) {
+  let passProducts = products.filter(p => !p.penalty);
+  let sorted = [...passProducts].sort((a,b) => {
+    let va, vb;
+    switch(col) {
+      case 'cagr': va = a.metrics.cagr; vb = b.metrics.cagr; break;
+      case 'dd': va = a.metrics.maxDrawdown.drawdown; vb = b.metrics.maxDrawdown.drawdown; break;
+      case 'ddRecovery': va = a.metrics.maxDrawdown.recoveryDays; vb = b.metrics.maxDrawdown.recoveryDays; break;
+      case 'vol': va = a.metrics.annualizedVolatility; vb = b.metrics.annualizedVolatility; break;
+      case 'calmar': va = a.metrics.calmarRatio; vb = b.metrics.calmarRatio; break;
+      case 'sortino': va = a.metrics.sortinoRatio; vb = b.metrics.sortinoRatio; break;
+      default: va = a.metrics.calmarRatio; vb = b.metrics.calmarRatio;
+    }
+    return asc ? va - vb : vb - va;
+  });
+
+  let html = '<thead><tr><th>排名</th><th>产品名称</th><th>公司</th><th>数据周期</th><th>频率</th>';
+  let cols = ['cagr','dd','ddRecovery','vol','calmar','sortino'];
+  let labels = ['年化收益','最大回撤','修复天数','波动率','卡玛','索提诺'];
+  for (let i = 0; i < cols.length; i++) {
+    html += `<th onclick="sortOverview('${cols[i]}')">${labels[i]}<span class="sort-arrow">${col===cols[i] ? (asc?'▲':'▼') : ''}</span></th>`;
+  }
+  html += '<th>胜率</th><th>综合分</th><th>标签</th><th>操作</th></tr></thead><tbody>';
+  sorted.forEach((p, idx) => {
+    let m = p.metrics;
+    let rankClass = idx === 0 ? 'rank-1' : idx === 1 ? 'rank-2' : idx === 2 ? 'rank-3' : 'rank-rest';
+    html += `<tr>
+      <td><span class="rank-badge ${rankClass}">${idx+1}</span></td>
+      <td><span class="product-name" onclick="showDetail(${p.id})">${p.managerName}</span></td>
+      <td>${p.company}</td><td>${m.dateRange}</td>
+      <td><span class="tag tag-${m.frequency}">${m.frequency === 'daily' ? '日频' : '周频'}</span></td>
+      <td class="${m.cagr >= 0 ? 'positive' : 'negative'}">${fmtPct(m.cagr)}</td>
+      <td class="negative">-${fmtPct(m.maxDrawdown.drawdown)}</td>
+      <td>${m.maxDrawdown.recovered ? m.maxDrawdown.recoveryDays + '天' : '未修复'}</td>
+      <td>${fmtPct(m.annualizedVolatility)}</td>
+      <td class="${m.calmarRatio >= 1 ? 'positive' : 'negative'}">${m.calmarRatio.toFixed(2)}</td>
+      <td class="${m.sortinoRatio >= 1 ? 'positive' : 'negative'}">${m.sortinoRatio.toFixed(2)}</td>
+      <td>${fmtPct(m.monthWinRate)}</td><td style="font-weight:700">-</td>
+      <td>${p.notes ? '<span class="tag tag-pass">' + p.notes + '</span>' : ''}</td>
+      <td><button class="btn btn-outline btn-sm" style="color:#d63031;border-color:#d63031" onclick="event.stopPropagation();deleteProduct(${p.id})">删除</button></td>
+    </tr>`;
+  });
+  html += '</tbody>';
+  document.getElementById('overviewTable').innerHTML = html;
+}
+
+// ============ Export CSV ============
+function exportCSV() {
+  let passProducts = products.filter(p => !p.penalty);
+  if (passProducts.length === 0) { alert('没有可导出的产品'); return; }
+  let rows = [['排名','产品名称','公司','数据周期','频率','年化收益','最大回撤','修复天数','年化波动率','卡玛比率','索提诺比率','月度胜率','备注']];
+  passProducts.forEach((p,i) => {
+    rows.push([i+1, p.managerName, p.company, p.metrics.dateRange, p.metrics.frequency,
+      (p.metrics.cagr*100).toFixed(2)+'%', '-'+(p.metrics.maxDrawdown.drawdown*100).toFixed(2)+'%',
+      p.metrics.maxDrawdown.recoveryDays, (p.metrics.annualizedVolatility*100).toFixed(2)+'%',
+      p.metrics.calmarRatio.toFixed(2), p.metrics.sortinoRatio.toFixed(2),
+      (p.metrics.monthWinRate*100).toFixed(1)+'%', p.notes||'']);
+  });
+  let csv = '\uFEFF' + rows.map(r => r.map(c => '"' + String(c).replace(/"/g,'""') + '"').join(',')).join('\n');
+  let blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+  let a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = '私募产品筛选_' + new Date().toISOString().slice(0,10) + '.csv'; a.click();
+}
+
+function resetFilters() {
+  document.getElementById('filterCalmar').value = 0;
+  document.getElementById('filterDD').value = 100;
+  document.getElementById('filterSortino').value = 0;
+  document.getElementById('wCalmar').value = 35; document.getElementById('wCalmarVal').textContent = 35;
+  document.getElementById('wSortino').value = 30; document.getElementById('wSortinoVal').textContent = 30;
+  document.getElementById('wLowDD').value = 20; document.getElementById('wLowDDVal').textContent = 20;
+  document.getElementById('wWinRate').value = 15; document.getElementById('wWinRateVal').textContent = 15;
+  renderOverview();
+}
+
+function renderDetailSelector() {
+  let passProducts = products.filter(p => !p.penalty);
+  let container = document.getElementById('detailSelector');
+  if (passProducts.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+  container.innerHTML = passProducts.map(p => 
+    `<button class="btn btn-outline btn-sm" style="margin:4px" onclick="showDetail(${p.id})">${p.managerName}</button>`
+  ).join('');
+}
+
+function renderVeto() {
+  let vetoProducts = products.filter(p => p.penalty);
+  let container = document.getElementById('vetoContent');
+  let empty = document.getElementById('emptyVeto');
+  
+  if (vetoProducts.length === 0) {
+    container.style.display = 'none';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+  container.style.display = 'block';
+
+  let html = '<thead><tr><th>产品名称</th><th>公司</th><th>否决原因</th><th>数据周期</th><th>年化收益</th><th>最大回撤</th></tr></thead><tbody>';
+  vetoProducts.forEach(p => {
+    let m = p.metrics;
+    html += `<tr class="veto-row">
+      <td><span class="product-name" onclick="showDetail(${p.id})">${p.managerName}</span></td>
+      <td>${p.company}</td>
+      <td><span class="tag tag-veto">${p.penaltyNote}</span></td>
+      <td>${m.dateRange}</td>
+      <td class="${m.cagr >= 0 ? 'positive' : 'negative'}">${fmtPct(m.cagr)}</td>
+      <td class="negative">-${fmtPct(m.maxDrawdown.drawdown)}</td>
+    </tr>`;
+  });
+  html += '</tbody>';
+  document.getElementById('vetoTable').innerHTML = html;
+}
+
+// ============ Comparison Chart ============
+const COMPARE_COLORS = ['#0984e3','#d63031','#00b894','#e17055','#6c5ce7','#fdcb6e','#2d3436','#e84393','#636e72','#00cec9'];
+
+function renderCompare() {
+  let passProducts = products.filter(p => !p.penalty);
+  let empty = document.getElementById('emptyCompare');
+  let content = document.getElementById('compareContent');
+  
+  if (passProducts.length < 2) {
+    content.style.display = 'none'; empty.style.display = 'block'; return;
+  }
+  empty.style.display = 'none'; content.style.display = 'block';
+
+  setTimeout(() => {
+    let existingChart = Chart.getChart('compareChart');
+    if (existingChart) existingChart.destroy();
+    let ctx = document.getElementById('compareChart')?.getContext('2d');
+    if (!ctx) return;
+
+    let datasets = passProducts.map((p, i) => {
+      let data = [...p.navData].sort((a,b) => a.date - b.date);
+      // Normalize to 1.0 at start
+      let base = data[0].nav;
+      return {
+        label: p.managerName,
+        data: data.map((d, j) => ({ x: fmtDate(d.date), y: d.nav / base })),
+        borderColor: COMPARE_COLORS[i % COMPARE_COLORS.length],
+        backgroundColor: 'transparent',
+        borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 3,
+        tension: 0.1
+      };
+    });
+
+    new Chart(ctx, {
+      type: 'line',
+      data: { datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { position: 'top', labels: { usePointStyle: true, padding: 16 } } },
+        scales: {
+          x: { ticks: { maxTicksLimit: 12, font: { size: 11 } }, grid: { display: false } },
+          y: { title: { display: true, text: '归一化净值 (起点=1)', font: { size: 11 } } }
+        }
+      }
+    });
+  }, 50);
+}
+
+// ============ Tabs ============
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    let tabId = tab.dataset.tab;
+    document.querySelectorAll('.tab-content').forEach(tc => tc.style.display = 'none');
+    document.getElementById('tab-' + tabId).style.display = 'block';
+  });
+});
+
+// ============ Detail Modal ============
+function showDetail(productId) {
+  let p = products.find(x => x.id === productId);
+  if (!p) return;
+  let m = p.metrics;
+
+  let modal = document.getElementById('detailModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'detailModal';
+    modal.className = 'modal-overlay';
+    modal.innerHTML = '<div class="modal" id="modalContent"></div>';
+    document.body.appendChild(modal);
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) modal.classList.remove('show');
+    });
+  }
+  
+  modal.classList.add('show');
+  
+  let isVeto = p.penalty;
+  
+  let html = `
+    <button class="modal-close" onclick="document.getElementById('detailModal').classList.remove('show')">✕</button>
+    <h3>📊 ${p.managerName} ${isVeto ? '<span class="tag tag-veto">一票否决</span>' : ''}</h3>
+    
+    <div class="metric-grid">
+      <div class="metric-box">
+        <div class="label">公司</div><div class="value" style="font-size:16px">${p.company}</div>
+      </div>
+      <div class="metric-box">
+        <div class="label">数据周期</div><div class="value" style="font-size:14px">${m.dateRange}</div>
+      </div>
+      <div class="metric-box">
+        <div class="label">数据频率</div><div class="value" style="font-size:14px"><span class="tag tag-${m.frequency}">${m.frequency === 'daily' ? '日频' : '周频'}</span></div>
+      </div>
+      <div class="metric-box">
+        <div class="label">数据点数</div><div class="value">${m.dataPoints}</div>
+      </div>
+    </div>
+  `;
+
+  if (isVeto) {
+    html += `<div class="warning-box" style="background:#ffeaea;border-color:#d63031;color:#d63031">
+      <span class="icon">⛔</span> 一票否决原因：${p.penaltyNote}
+    </div>`;
+  }
+
+  // Key metrics
+  html += `<h4 style="margin-top:24px">核心指标</h4>
+  <div class="metric-grid">
+    <div class="metric-box">
+      <div class="label">年化收益率 (CAGR)</div>
+      <div class="value ${m.cagr >= 0 ? 'positive' : 'negative'}">${fmtPct(m.cagr)}</div>
+    </div>
+    <div class="metric-box">
+      <div class="label">历史最大回撤</div>
+      <div class="value negative">-${fmtPct(m.maxDrawdown.drawdown)}</div>
+    </div>
+    <div class="metric-box">
+      <div class="label">卡玛比率</div>
+      <div class="value ${m.calmarRatio >= 1 ? 'positive' : 'negative'}">${m.calmarRatio.toFixed(2)}</div>
+    </div>
+    <div class="metric-box">
+      <div class="label">年化波动率</div>
+      <div class="value">${fmtPct(m.annualizedVolatility)}</div>
+    </div>
+    <div class="metric-box">
+      <div class="label">月度胜率</div>
+      <div class="value">${fmtPct(m.monthWinRate)}</div>
+    </div>
+  </div>
+
+  <div class="chart-container">
+    <h4 style="margin:0 0 12px 0;font-size:14px">📈 净值走势图</h4>
+    <canvas id="navChart"></canvas>
+  </div>`;
+
+  // Max drawdown timeline
+  html += `<h4 style="margin-top:24px">历史最大回撤详情</h4>
+  <div class="dd-timeline">
+    <div class="dd-node">
+      <div class="dd-desc">峰值日期</div>
+      <div class="dd-date">${m.maxDrawdown.peakDate}</div>
+    </div>
+    <div class="dd-arrow">→</div>
+    <div class="dd-node" style="background:#ffeaea">
+      <div class="dd-desc">最低点 (${m.maxDrawdown.totalDays}天后)</div>
+      <div class="dd-date">${m.maxDrawdown.troughDate}</div>
+    </div>
+    <div class="dd-arrow">→</div>
+    <div class="dd-node" style="background:#e8f8f5">
+      <div class="dd-desc">${m.maxDrawdown.recovered ? '修复日期' : '至今未修复'}</div>
+      <div class="dd-date">${m.maxDrawdown.recovered ? m.maxDrawdown.recoveryDate : '—'}</div>
+    </div>
+  </div>
+  <div style="margin-top:8px;font-size:13px;color:var(--text-light)">
+    回撤幅度：<span class="negative">-${fmtPct(m.maxDrawdown.drawdown)}</span> | 
+    下跌天数：<strong>${m.maxDrawdown.totalDays}天</strong> | 
+    修复天数：<strong>${m.maxDrawdown.recovered ? m.maxDrawdown.recoveryDays + '天' : '未修复'}</strong>
+  </div>`;
+
+  // Annual returns table
+  html += `<h4 style="margin-top:24px">逐年收益详情</h4>
+  <table><thead><tr><th>年份</th><th>年收益率</th><th>年内最大回撤</th><th>回撤修复天数</th></tr></thead><tbody>`;
+  let annDDMap = {};
+  m.annualDrawdowns.forEach(d => annDDMap[d.year] = d);
+  m.annualReturns.forEach(ar => {
+    let dd = annDDMap[ar.year] || { maxDrawdown: 0, recoveryDays: '-' };
+    html += `<tr>
+      <td><strong>${ar.year}</strong></td>
+      <td class="${ar.return >= 0 ? 'positive' : 'negative'}">${fmtPct(ar.return)}</td>
+      <td class="negative">-${fmtPct(dd.maxDrawdown)}</td>
+      <td>${dd.recoveryDays !== null ? dd.recoveryDays + '天' : '—'}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+
+  // Dividend history
+  if (m.dividends && m.dividends.length > 0) {
+    html += `<h4 style="margin-top:24px">💰 历史分红记录</h4>
+    <p style="font-size:12px;color:var(--text-light);margin-bottom:8px">通过累计净值与单位净值偏离自动检测</p>
+    <table><thead><tr>
+      <th>除权日</th><th>前一日单位净值</th><th>除权日单位净值</th><th>当日市场涨跌</th><th>每份分红(元)</th><th>分红率</th>
+    </tr></thead><tbody>`;
+    m.dividends.forEach(d => {
+      html += `<tr>
+        <td style="font-weight:600;color:var(--red)">${d.exDate}</td>
+        <td>${d.prevUnitNav.toFixed(4)}</td>
+        <td>${d.exUnitNav.toFixed(4)}</td>
+        <td class="${d.marketReturn >= 0 ? 'positive' : 'negative'}">${fmtPct(d.marketReturn)}</td>
+        <td class="positive">${d.divPerShare.toFixed(4)}</td>
+        <td class="positive">${d.divRate.toFixed(2)}%</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+  }
+
+  // Monthly heatmap
+  html += `<h4 style="margin-top:24px">月度收益率热力图</h4>
+  <div style="font-size:12px;color:var(--text-light);margin-bottom:8px">
+    红色越深 = 收益越高 | 绿色越深 = 亏损越大 | 括号内为负收益月份
+  </div>`;
+
+  // Group monthly returns by year
+  let heatData = {};
+  m.monthlyReturns.forEach(mr => {
+    let parts = mr.yearMonth.split('-');
+    let yr = parseInt(parts[0]);
+    let mo = parseInt(parts[1]);
+    if (!heatData[yr]) heatData[yr] = Array(12).fill(null);
+    heatData[yr][mo-1] = mr.return;
+  });
+
+  let years = Object.keys(heatData).sort();
+  html += '<div class="heatmap">';
+  // Header
+  html += '<div class="hm-header"></div>';
+  let monthLabels = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  monthLabels.forEach(ml => html += `<div class="hm-header">${ml}</div>`);
+  
+  years.forEach(yr => {
+    html += `<div class="hm-year">${yr}</div>`;
+    for (let mo = 0; mo < 12; mo++) {
+      let ret = heatData[yr][mo];
+      if (ret === null) {
+        html += '<div class="hm-cell" style="background:#eee;color:#ccc">-</div>';
+      } else {
+        // Color scale: red for positive (deeper = higher), green for negative
+        let absVal = Math.abs(ret);
+        let intensity = Math.min(absVal / 0.15, 1); // cap at 15%
+        let r, g, b;
+        if (ret >= 0) {
+          // Red gradient
+          r = 255; g = Math.round(180 - intensity * 150); b = Math.round(180 - intensity * 150);
+        } else {
+          // Green gradient
+          g = Math.round(180 + intensity * 75); r = Math.round(255 - intensity * 200); b = Math.round(150 - intensity * 100);
+        }
+        let textColor = intensity > 0.5 ? '#fff' : '#333';
+        html += `<div class="hm-cell" style="background:rgb(${r},${g},${b});color:${textColor}">${fmtPct(ret)}</div>`;
+      }
+    }
+  });
+  html += '</div>';
+
+  document.getElementById('modalContent').innerHTML = html;
+
+  // Render NAV chart
+  setTimeout(() => {
+    let chartData = [...p.navData].sort((a,b) => a.date - b.date);
+    let labels = chartData.map(d => fmtDate(d.date));
+    let navValues = chartData.map(d => d.nav);
+    
+    // Destroy existing chart if any
+    let existingChart = Chart.getChart('navChart');
+    if (existingChart) existingChart.destroy();
+    
+    let ctx = document.getElementById('navChart')?.getContext('2d');
+    if (!ctx) return;
+    
+    // Build annotation zone for max drawdown
+    let ddPeakIdx = labels.indexOf(m.maxDrawdown.peakDate);
+    let ddTroughIdx = labels.indexOf(m.maxDrawdown.troughDate);
+    let ddRecoveryIdx = m.maxDrawdown.recovered ? labels.indexOf(m.maxDrawdown.recoveryDate) : labels.length - 1;
+    if (ddPeakIdx < 0) ddPeakIdx = 0;
+    if (ddTroughIdx < 0) ddTroughIdx = labels.length - 1;
+    
+    // Build datasets: unit NAV + cumulative NAV (if available)
+    let datasets = [{
+      label: '单位净值',
+      data: navValues,
+      borderColor: '#0984e3',
+      backgroundColor: 'rgba(9, 132, 227, 0.06)',
+      borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 4,
+      pointHoverBackgroundColor: '#0984e3', fill: true, tension: 0.1
+    }];
+    
+    let cumValues = chartData.map(d => d.cumNav).filter(v => v !== null && v !== undefined);
+    if (cumValues.length > 0 && m.hasCumNav) {
+      datasets.push({
+        label: '累计净值',
+        data: chartData.map(d => d.cumNav),
+        borderColor: '#d63031',
+        backgroundColor: 'transparent',
+        borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 4,
+        borderDash: [4, 3], tension: 0.1
+      });
+    }
+    
+    new Chart(ctx, {
+      type: 'line',
+      data: { labels: labels, datasets: datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: datasets.length > 1, position: 'top', labels: { usePointStyle: true, boxWidth: 8, font: { size: 11 } } },
+          tooltip: { callbacks: { label: (ctx) => ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(4) } }
+        },
+        scales: {
+          x: {
+            ticks: { 
+              maxTicksLimit: 12,
+              font: { size: 11 }
+            },
+            grid: { display: false }
+          },
+          y: {
+            ticks: { 
+              font: { size: 11 },
+              callback: (v) => v.toFixed(2)
+            }
+          }
+        }
+      },
+      plugins: [{
+        id: 'drawdownAnnotation',
+        afterDraw: (chart) => {
+          if (ddPeakIdx < ddTroughIdx) {
+            let ctx2 = chart.ctx;
+            let xAxis = chart.scales.x;
+            let yAxis = chart.scales.y;
+            let x1 = xAxis.getPixelForValue(labels[ddPeakIdx]);
+            let x2 = xAxis.getPixelForValue(labels[ddRecoveryIdx]);
+            
+            ctx2.save();
+            ctx2.fillStyle = 'rgba(214, 48, 49, 0.08)';
+            ctx2.fillRect(x1, yAxis.top, x2 - x1, yAxis.bottom - yAxis.top);
+            
+            ctx2.restore();
+          }
+        }
+      }]
+    });
+  }, 50);
+}
+
+// ============ Initialize ============
+loadProducts();
+renderAll();
+</script>
+</body>
+</html>
