@@ -271,7 +271,7 @@ const STORAGE_KEY = 'fund_screener_products';
 function saveProducts() {
   try {
     let data = products.map(p => ({
-      id: p.id, managerName: p.managerName, company: p.company,
+      id: p.id, code: p.code || '', managerName: p.managerName, company: p.company,
       penalty: p.penalty, penaltyNote: p.penaltyNote, notes: p.notes,
       navData: p.navData.map(d => ({ date: d.date.getTime(), nav: d.nav, cumNav: d.cumNav }))
     }));
@@ -318,9 +318,22 @@ function calcMetrics(navData) {
   // Sort by date
   navData.sort((a,b) => a.date - b.date);
   const dates = navData.map(d => d.date);
-  const navs = navData.map(d => d.nav);
+  let navs = navData.map(d => d.nav);
   const n = navs.length;
   if (n < 2) return null;
+
+  // Check for cumulative NAV and use it for all metric calculations
+  // Cumulative NAV accounts for dividends → correct returns & drawdowns
+  let hasCumNav = navData.some(d => d.cumNav !== null && d.cumNav !== undefined && !isNaN(d.cumNav));
+  let usedCumNav = false;
+  if (hasCumNav) {
+    let cumNavs = navData.map(d => d.cumNav);
+    // Verify cum_nav series is valid (all positive, monotonically general)
+    if (cumNavs.every(v => v > 0) && cumNavs.some(v => v > navs[0])) {
+      navs = cumNavs;
+      usedCumNav = true;
+    }
+  }
 
   // Detect frequency
   let totalDays = (dates[n-1] - dates[0]) / (1000*3600*24);
@@ -521,12 +534,14 @@ function calcMetrics(navData) {
     calmarRatio: calmar,
     sortinoRatio: sortino,
     dividends: dividends,
-    hasCumNav: hasCumNav
+    hasCumNav: hasCumNav,
+    usedCumNav: usedCumNav
   };
 }
 
 // ============ 文件上传处理 ============
 let uploadedNavData = null;
+let uploadedMeta = null; // auto-detected { productCode, productName, autoMgrName }
 
 document.getElementById('fileDrop').addEventListener('click', () => {
   document.getElementById('fileInput').click();
@@ -599,6 +614,56 @@ function handleFile(e) {
         }
       }
 
+      // Detect product code + product name columns
+      let codeCol = -1, nameCol = -1, sampleRow = 0;
+      // Find first data row to sample from
+      for (let i = 0; i < Math.min(data.length, 12); i++) {
+        let d = parseDate(data[i]?.[dateCol]);
+        if (d) { sampleRow = i; break; }
+      }
+      let usedCols = [dateCol, navCol, cumNavCol].filter(c => c >= 0);
+      for (let j = 0; j < (data[0]?.length || 0); j++) {
+        if (usedCols.includes(j)) continue;
+        let vals = [];
+        for (let i = sampleRow; i < Math.min(data.length, sampleRow + 50); i++) {
+          let v = data[i]?.[j];
+          if (v !== null && v !== undefined && v !== '') vals.push(String(v).trim());
+        }
+        if (vals.length < 3) continue;
+        let unique = new Set(vals);
+        if (unique.size === 1 && vals[0].length >= 3 && vals[0].length <= 12) { codeCol = j; continue; }
+        let prefixes = vals.map(v => v.replace(/[0-9一二三四五六七八九十]+/g,'').replace(/号|型|类|级|A|B|C$/g,'').trim());
+        let uniquePref = new Set(prefixes);
+        if (uniquePref.size <= 2 && vals[0].length > 4) { nameCol = j; }
+      }
+
+      let productCode = '', productName = '', autoMgrName = '';
+      if (codeCol >= 0 || nameCol >= 0) {
+        let fnMatch = file.name.match(/^([A-Z]{2,6}\d+)/);
+        if (fnMatch) productCode = fnMatch[1];
+        if (!productCode && codeCol >= 0) productCode = String(data[sampleRow]?.[codeCol] || '').trim();
+        if (nameCol >= 0 && data[sampleRow]?.[nameCol]) {
+          productName = String(data[sampleRow][nameCol]).trim();
+        } else if (codeCol >= 0) {
+          for (let k of [codeCol+1, codeCol-1]) {
+            if (k >= 0 && k < (data[sampleRow]?.length||0) && String(data[sampleRow][k]).length > 4) {
+              productName = String(data[sampleRow][k]).trim(); break;
+            }
+          }
+        }
+        if (!productName) productName = file.name.replace(/\.(xlsx|xls|csv)$/i,'').replace(/[_\-]/g,' ').trim();
+        if (productName) {
+          let mgr = productName.replace(/私募证券投资[基金]{0,2}/g,'').replace(/基金$/,'').replace(/[A-Z]$/,'').trim();
+          let m = mgr.match(/^([^\d一二三四五六七八九十]+?)(?:[一二三四五六七八九十]|\d|\s*$)/);
+          autoMgrName = (m && m[1].length >= 2 && m[1].length <= 6) ? m[1].trim() : mgr.slice(0, 6);
+        }
+      }
+      uploadedMeta = { productCode, productName, autoMgrName };
+      if (productName) {
+        document.getElementById('mgrName').value = autoMgrName || productName;
+        document.getElementById('company').value = productName;
+      }
+
       // Find start row (skip header rows)
       let startRow = 0;
       for (let i = 0; i < Math.min(data.length, 10); i++) {
@@ -643,12 +708,12 @@ function handleFile(e) {
 
 // ============ 添加产品 ============
 document.getElementById('btnAdd').addEventListener('click', () => {
-  let mgrName = document.getElementById('mgrName').value.trim();
-  if (!mgrName) { alert('请输入管理人名称'); return; }
   if (!uploadedNavData) { alert('请先上传净值Excel文件'); return; }
 
+  let mgrName = document.getElementById('mgrName').value.trim() || (uploadedMeta?.autoMgrName || '');
+  let company = document.getElementById('company').value.trim() || (uploadedMeta?.productName || '');
+  let code = uploadedMeta?.productCode || '';
   let penalty = document.getElementById('penalty').value === 'yes';
-  let company = document.getElementById('company').value.trim();
   let notes = document.getElementById('notes').value.trim();
 
   let metrics = calcMetrics(uploadedNavData);
@@ -656,6 +721,7 @@ document.getElementById('btnAdd').addEventListener('click', () => {
 
   products.push({
     id: Date.now(),
+    code: code,
     managerName: mgrName,
     company: company || mgrName,
     penalty: penalty,
@@ -674,6 +740,7 @@ document.getElementById('btnAdd').addEventListener('click', () => {
   document.getElementById('fileName').style.display = 'none';
   document.getElementById('fileInput').value = '';
   uploadedNavData = null;
+  uploadedMeta = null;
 
   renderAll();
 });
@@ -899,7 +966,7 @@ function renderOverview() {
   warning.style.display = products.filter(p => p.penalty).length === 0 ? 'block' : 'none';
 
   let html = `<thead><tr>
-    <th>排名</th><th>产品名称</th><th>公司</th><th>数据周期</th><th>频率</th>
+    <th>排名</th><th>代码</th><th>产品名称</th><th>公司</th><th>数据周期</th><th>频率</th>
     <th onclick="sortOverview('cagr')">年化收益</th>
     <th onclick="sortOverview('dd')">最大回撤</th>
     <th onclick="sortOverview('ddRecovery')">修复天数</th>
@@ -918,6 +985,7 @@ function renderOverview() {
       let rankClass = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : rank === 3 ? 'rank-3' : 'rank-rest';
       html += `<tr>
         <td><span class="rank-badge ${rankClass}">${rank}</span></td>
+        <td style="font-size:11px;color:var(--text-light)">${p.code || ''}</td>
         <td><span class="product-name" onclick="showDetail(${p.id})">${p.managerName}</span></td>
         <td>${p.company}</td>
         <td>${m.dateRange}</td>
@@ -964,7 +1032,7 @@ function renderOverviewSorted(col, asc) {
     return asc ? va - vb : vb - va;
   });
 
-  let html = '<thead><tr><th>排名</th><th>产品名称</th><th>公司</th><th>数据周期</th><th>频率</th>';
+  let html = '<thead><tr><th>排名</th><th>代码</th><th>产品名称</th><th>公司</th><th>数据周期</th><th>频率</th>';
   let cols = ['cagr','dd','ddRecovery','vol','calmar','sortino'];
   let labels = ['年化收益','最大回撤','修复天数','波动率','卡玛','索提诺'];
   for (let i = 0; i < cols.length; i++) {
@@ -976,6 +1044,7 @@ function renderOverviewSorted(col, asc) {
     let rankClass = idx === 0 ? 'rank-1' : idx === 1 ? 'rank-2' : idx === 2 ? 'rank-3' : 'rank-rest';
     html += `<tr>
       <td><span class="rank-badge ${rankClass}">${idx+1}</span></td>
+      <td style="font-size:11px;color:var(--text-light)">${p.code || ''}</td>
       <td><span class="product-name" onclick="showDetail(${p.id})">${p.managerName}</span></td>
       <td>${p.company}</td><td>${m.dateRange}</td>
       <td><span class="tag tag-${m.frequency}">${m.frequency === 'daily' ? '日频' : '周频'}</span></td>
@@ -1173,7 +1242,7 @@ function showDetail(productId) {
   }
 
   // Key metrics
-  html += `<h4 style="margin-top:24px">核心指标</h4>
+  html += `<h4 style="margin-top:24px">核心指标 ${m.usedCumNav ? '<span style="font-size:11px;color:#00b894;font-weight:400">（基于累计净值复权计算，已消除分红影响）</span>' : ''}</h4>
   <div class="metric-grid">
     <div class="metric-box">
       <div class="label">年化收益率 (CAGR)</div>
